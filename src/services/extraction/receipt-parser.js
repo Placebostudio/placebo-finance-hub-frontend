@@ -46,6 +46,9 @@ const INVOICE_NUMBER_PATTERNS = [
   // Receipt #: ABC123
   /receipt\s*#\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
 
+  // Receipt for #4032
+  /receipt\s+for\s*#\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
   // Reference No: ABC123
   /ref(?:erence)?\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
 
