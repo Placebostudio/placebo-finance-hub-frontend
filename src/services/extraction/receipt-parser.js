@@ -20,8 +20,14 @@ import { detectCountry, getCountryVatRate } from '@/config/vat-config';
 
 const DOCUMENT_TYPE_PATTERNS = {
   invoice: /\b(invoice|חשבונית|bill|billing|faktura|factura|rechnung)\b/i,
+
   receipt: /\b(receipt|קבלה|reçu|quittung|ricevuta|kvitto)\b/i,
+
   credit_note: /\b(credit\s*note|credit\s*memo|gutschrift|note\s*de\s*crédit)\b/i,
+
+  withdrawal: /\b(withdrawal|withdraw|cash\s*withdrawal|משיכה)\b/i,
+
+  deposit: /\b(deposit|cash\s*deposit|הפקדה)\b/i,
 };
 
 const INVOICE_NUMBER_PATTERNS = [
@@ -58,13 +64,22 @@ const NET_LABEL_PATTERNS = [
 ];
 
 const VAT_AMOUNT_LABEL_PATTERNS = [
-  /(?:vat|gst|hst|pst|tva|mwst|iva|מע"מ)\s*(?:amount)?\s*(?:@\s*[\d.]+\s*%)?\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:tax|מס\s+ערך\s+מוסף)\s*(?:amount)?\s*[:\-]?\s*([\d,. ]+)/i,
+  // Tax (13%) $456.30
+  /(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס\s+ערך\s+מוסף)\s*\(?\s*[\d.]+\s*%\s*\)?\s*[$€£₪]?\s*([\d,. ]+)/i,
+
+  // VAT amount: $456.30
+  /(?:vat|gst|hst|pst|tva|mwst|iva|מע"מ)\s+(?:amount)\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+
+  // Tax: $456.30
+  /(?:tax|מס\s+ערך\s+מוסף)\s*[:\-]\s*[$€£₪]?\s*([\d,. ]+)/i,
 ];
 
 const VAT_RATE_PATTERNS = [
-  /(?:vat|tax|gst|מע"מ|מס)\s*@?\s*([\d.]+)\s*%/i,
-  /([\d.]+)\s*%\s*(?:vat|tax|gst|מע"מ|מס)/i,
+  // Tax (13%)
+  /(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס)\s*\(?\s*([\d.]+)\s*%\s*\)?/i,
+
+  // 13% Tax
+  /([\d.]+)\s*%\s*(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס)/i,
 ];
 
 const CURRENCY_DETECTORS = [
@@ -124,15 +139,45 @@ function parseDate(raw) {
 
 /** Find first ISO date in a string fragment. */
 function extractDateFromFragment(frag) {
+  const text = String(frag).trim();
+  const lower = text.toLowerCase();
+
   const candidates = [
-    ...frag.matchAll(/\b(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})\b/g),
-    ...frag.matchAll(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b/g),
-    ...frag.matchAll(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})\b/g),
+    // YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+    ...text.matchAll(
+      /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/g
+    ),
+
+    // DD/MM/YYYY / DD-MM-YYYY / DD.MM.YYYY
+    ...text.matchAll(
+      /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}\b/g
+    ),
+
+    // DD/MM/YY
+    ...text.matchAll(
+      /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2}\b/g
+    ),
+
+    // October 27, 2023 / oct 27, 2023
+    ...lower.matchAll(
+      /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b/g
+    ),
+
+    // 27 October 2023 / 27 oct 2023
+    ...lower.matchAll(
+      /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[,\s]+\d{4}\b/g
+    ),
   ];
+
   for (const m of candidates) {
     const d = parseDate(m[0]);
     if (d) return d;
   }
+
+  // Fallback: let parseDate try the entire fragment.
+  const direct = parseDate(text);
+  if (direct) return direct;
+
   return null;
 }
 
@@ -323,7 +368,7 @@ export function parseReceipt(fullText, pages = []) {
   //   2. Country detected with medium or high confidence
   // Explicit receipt VAT always wins over country default.
   if (vatRate === null && countryDetected &&
-      (countryDetected.confidence === 'high' || countryDetected.confidence === 'medium')) {
+    (countryDetected.confidence === 'high' || countryDetected.confidence === 'medium')) {
     const countryVat = getCountryVatRate(countryDetected.code);
     if (countryVat !== null) {
       vatRate = countryVat;

@@ -41,6 +41,7 @@ export async function ocrSource(source, onProgress = () => {}) {
 
   try {
     const { data: { text } } = await worker.recognize(source);
+    console.log(text);
     return text ?? '';
   } finally {
     await worker.terminate().catch(() => {});
