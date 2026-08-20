@@ -9,14 +9,19 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/layout/page-header";
+import { PeriodSelector } from "@/components/layout/period-selector";
 import { expenseService } from "@/services/expense.service";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { usePeriodStore } from "@/store/period";
+import { formatCurrency, formatDate, buildPeriod, periodLabel } from "@/lib/utils";
 import { toast } from "sonner";
 
 const STATUS_VARIANTS = { approved: "success", draft: "secondary", rejected: "destructive" };
 const METHOD_ICONS = { credit_card: CreditCard, bank_transfer: Landmark, cash: Banknote };
 
 export default function ExpensesPage() {
+  const { month, year, setPeriod } = usePeriodStore();
+  const period = buildPeriod(year, month);
+
   const [expenses, setExpenses] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -24,7 +29,17 @@ export default function ExpensesPage() {
   function load() { setExpenses(expenseService.getAll()); }
   useEffect(() => { load(); }, []);
 
-  const filtered = expenses.filter((e) => {
+  function handlePeriodChange(m, y) {
+    setPeriod(m, y);
+    setSearch("");
+    setStatusFilter("all");
+  }
+
+  const periodExpenses = expenses.filter(
+    (e) => e.documentDate && e.documentDate.startsWith(period)
+  );
+
+  const filtered = periodExpenses.filter((e) => {
     const matchSearch =
       !search ||
       (e.vendorName ?? "").toLowerCase().includes(search.toLowerCase()) ||
@@ -52,7 +67,7 @@ export default function ExpensesPage() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="Expenses"
-        description={`${expenses.length} expense record${expenses.length !== 1 ? "s" : ""}`}
+        description={`${periodExpenses.length} expense record${periodExpenses.length !== 1 ? "s" : ""} · ${periodLabel(period)}`}
         actions={
           <Button asChild size="sm" variant="outline">
             <Link href="/documents/upload">Upload Document</Link>
@@ -61,6 +76,12 @@ export default function ExpensesPage() {
       />
 
       <div className="flex-1 p-6 space-y-4 overflow-auto">
+
+        {/* Period selector bar */}
+        <div className="flex items-center gap-4 flex-wrap rounded-lg border bg-muted/30 px-4 py-2.5">
+          <PeriodSelector month={month} year={year} onChange={handlePeriodChange} label="Expenses Period" />
+        </div>
+
         {/* Filters */}
         <div className="flex gap-3 items-center">
           <div className="relative flex-1 max-w-xs">
@@ -88,7 +109,7 @@ export default function ExpensesPage() {
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
             <Receipt className="h-12 w-12 mb-4 opacity-30" />
-            <p className="text-sm">{search || statusFilter !== "all" ? "No expenses match your filter" : "No expenses yet"}</p>
+            <p className="text-sm">{search || statusFilter !== "all" ? "No expenses match your filter" : `No expenses for ${periodLabel(period)}`}</p>
           </div>
         ) : (
           <>
