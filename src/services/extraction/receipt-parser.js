@@ -14,7 +14,7 @@
  * The country field also includes: { countryName, confidence, reason }
  */
 
-import { detectCountry, getCountryVatRate } from '@/config/vat-config';
+import { detectCountry, extractAddress, extractCity, geocode, getCountryVatRate } from '@/config/vat-config';
 
 // ── Keyword dictionaries (extend to add more languages) ──────────────────────
 
@@ -31,12 +31,31 @@ const DOCUMENT_TYPE_PATTERNS = {
 };
 
 const INVOICE_NUMBER_PATTERNS = [
-  /invoice\s*(?:no\.?|number|num\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /inv\.?\s*(?:no\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:receipt|ref(?:erence)?)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:order|po)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:חשבונית|קבלה|מספר)\s*:?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /#\s*([A-Z0-9][A-Z0-9\-\/]{3,20})\b/i,
+  // Invoice No: ABC123 / 12345
+  /invoice\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Invoice #: ABC123 / 12345
+  /invoice\s*#\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Inv. No: ABC123
+  /inv\.?\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Receipt No: ABC123
+  /receipt\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Receipt #: ABC123
+  /receipt\s*#\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Reference No: ABC123
+  /ref(?:erence)?\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Order No / PO No
+  /(?:order|po)\s*(?:no\.?|number|num\.?)?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  // Hebrew
+  /(?:חשבונית|קבלה)\s*(?:מספר|מס׳|מס')?\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
+
+  /מספר\s*[:\-]?\s*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,20})/i,
 ];
 
 const DATE_LABEL_PATTERNS = [
@@ -50,10 +69,22 @@ const DUE_DATE_LABEL_PATTERNS = [
 ];
 
 const GROSS_LABEL_PATTERNS = [
-  /(?:grand\s+)?total\s+(?:amount\s+)?(?:due|paid|payable)?\s*[:\-]?\s*([\d,. ]+)/i,
+  // Amount Received : 32888
+  /(?:amount\s+received|amount\s+paid|amount\s+payable)\s*[:\-]?\s*([\d,. ]+)/i,
+
+  // Grand Total / Total Amount / Total Due / Total Paid
+  /(?:grand\s+)?total\s+(?:amount\s+)?(?:due|paid|payable)\s*[:\-]?\s*([\d,. ]+)/i,
+
+  // Amount Due / Amount Total / Amount Paid
   /amount\s+(?:due|total|paid|payable)\s*[:\-]?\s*([\d,. ]+)/i,
+
+  // Plain Total
   /total\s*[:\-]?\s*([\d,. ]+)/i,
+
+  // Hebrew
   /(?:סה"כ|סכום\s+כולל|לתשלום|סה"כ\s+לתשלום)\s*[:\-]?\s*([\d,. ]+)/i,
+
+  // German / French / Spanish
   /(?:summe\s+gesamt|montant\s+total|importe\s+total)\s*[:\-]?\s*([\d,. ]+)/i,
 ];
 
@@ -99,6 +130,7 @@ const VENDOR_SKIP = /^(invoice|receipt|tax\s+invoice|bill|statement|date|total|a
 function makeField(value, status, sourceText = '', method = 'keyword', page = 1) {
   return { value, status, sourceText, method, page };
 }
+
 function missing() {
   return { value: null, status: 'missing', sourceText: '', method: 'none', page: null };
 }
@@ -230,7 +262,7 @@ function detectCurrency(text) {
  * @param {{ pageNum:number, text:string, items:object[] }[]} pages
  * @returns {{ fields: object, validationIssues: object[] }}
  */
-export function parseReceipt(fullText, pages = []) {
+export async function parseReceipt(fullText, pages = []) {
   const lines = fullText.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
   const fields = {};
 
@@ -338,19 +370,129 @@ export function parseReceipt(fullText, pages = []) {
     }
   }
 
-  // ── Country detection ─────────────────────────────────────────────────────
-  const countryDetected = detectCountry(fullText);
+  // ── Country detection + city/address geocoding + VAT fallback ───────────────
+
+  // ── Country detection ──────────────────────────────────────────────────────
+
+  // First: try local country detection.
+  // This costs nothing and does not call any API.
+  let countryDetected = detectCountry(fullText);
+
+  // Helper: reject obvious OCR/template placeholders.
+  const isPlaceholder = (value) => {
+    if (!value) return true;
+
+    const normalized = String(value)
+      .trim()
+      .toLowerCase();
+
+    return [
+      'address',
+      '[address]',
+      '(address)',
+      'city',
+      '[city]',
+      '(city)',
+      'street',
+      '[street]',
+      '(street)',
+      'name',
+      '[name]',
+      '(name)',
+      'company',
+      '[company]',
+      '(company)',
+    ].includes(normalized);
+  };
+
+  // If direct country detection failed, try extracting a city.
+  if (!countryDetected) {
+    const city = extractCity(fullText);
+
+    // Do not send obvious template/placeholder values to the API.
+    if (city && !isPlaceholder(city)) {
+      const geoResult = await geocode(city);
+
+      if (geoResult?.countryCode) {
+        countryDetected = {
+          code: geoResult.countryCode,
+          name: geoResult.country,
+          confidence: 'low',
+          reason: `Country determined from city "${city}"`,
+          method: 'city_geocoding',
+        };
+      }
+    }
+  }
+
+  // If city lookup also failed, try extracting an address/street.
+  if (!countryDetected) {
+    const address = extractAddress(fullText);
+
+    // Do not send obvious template/placeholder values to the API.
+    if (address && !isPlaceholder(address)) {
+      const geoResult = await geocode(address);
+
+      if (geoResult?.countryCode) {
+        countryDetected = {
+          code: geoResult.countryCode,
+          name: geoResult.country,
+          confidence: 'low',
+          reason: `Country determined from address "${address}"`,
+          method: 'address_geocoding',
+        };
+      }
+    }
+  }
+
+
+  // ── Save country + VAT fallback ────────────────────────────────────────────
+
   if (countryDetected) {
+
     fields.country = {
       value: countryDetected.code,
       countryName: countryDetected.name,
       confidence: countryDetected.confidence,
-      status: countryDetected.confidence === 'low' ? 'review' : 'found',
+
+      // Only high/medium confidence is considered found.
+      // Geocoding is intentionally low confidence.
+      status:
+        countryDetected.confidence === 'low'
+          ? 'review'
+          : 'found',
+
       sourceText: countryDetected.reason,
-      method: 'country_detection',
+      method: countryDetected.method ?? 'country_detection',
       page: null,
     };
+
+    // ── VAT fallback ──────────────────────────────────────────────────────────
+    // Only use a country's VAT rate when:
+    // 1. No explicit VAT rate was found.
+    // 2. Country confidence is high or medium.
+    //
+    // We DO NOT use a low-confidence geocoded country
+    // to invent a VAT rate.
+
+    if (
+      vatRate === null &&
+      ['high', 'medium'].includes(countryDetected.confidence)
+    ) {
+      const countryVat = getCountryVatRate(countryDetected.code);
+
+      if (countryVat !== null) {
+        vatRate = countryVat;
+
+        vatRateLine =
+          `Standard rate for ${countryDetected.name}: ${countryVat}%`;
+
+        vatRateMethod = 'country_default';
+      }
+    }
+
   } else {
+
     fields.country = {
       value: null,
       countryName: null,
@@ -362,25 +504,19 @@ export function parseReceipt(fullText, pages = []) {
     };
   }
 
-  // ── VAT rate fallback: use country standard rate ───────────────────────────
-  // Only when:
-  //   1. No explicit VAT rate found on the receipt
-  //   2. Country detected with medium or high confidence
-  // Explicit receipt VAT always wins over country default.
-  if (vatRate === null && countryDetected &&
-    (countryDetected.confidence === 'high' || countryDetected.confidence === 'medium')) {
-    const countryVat = getCountryVatRate(countryDetected.code);
-    if (countryVat !== null) {
-      vatRate = countryVat;
-      vatRateLine = `Standard rate for ${countryDetected.name}: ${countryVat}%`;
-      vatRateMethod = 'country_default';
-    }
-  }
+
+  // ── Final VAT rate field ────────────────────────────────────────────────────
 
   fields.vatRate = vatRate !== null
-    ? makeField(vatRate, vatRateMethod === 'country_default' ? 'review' : 'found', vatRateLine, vatRateMethod)
+    ? makeField(
+      vatRate,
+      vatRateMethod === 'country_default'
+        ? 'review'
+        : 'found',
+      vatRateLine,
+      vatRateMethod
+    )
     : missing();
-
   // ── Gross amount ──────────────────────────────────────────────────────────
   let grossAmount = null;
   let grossAmountLine = '';

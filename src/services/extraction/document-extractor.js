@@ -146,7 +146,7 @@ export async function extractReceipt(file, onProgress = () => {}) {
 
   let fields, validationIssues;
   try {
-    ({ fields, validationIssues } = parseReceipt(fullText, pages));
+    ({ fields, validationIssues } = await parseReceipt(fullText, pages));
     const parsedSummary = Object.fromEntries(
       Object.entries(fields).map(([k, f]) => [k, { value: f.value, status: f.status }])
     );

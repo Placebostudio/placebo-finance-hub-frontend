@@ -11,6 +11,42 @@
 
 const LANGS = 'eng+heb';
 
+async function preprocessImage(source) {
+  const image = new Image();
+
+  const url = URL.createObjectURL(source);
+
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = url;
+    });
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Scale image up for OCR
+    const scale = 2;
+
+    canvas.width = image.width * scale;
+    canvas.height = image.height * scale;
+
+    ctx.drawImage(
+      image,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+
+    // Convert to a high-quality JPEG
+    return canvas.toDataURL('image/jpeg', 0.95);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /**
  * Run OCR on source.
  *
@@ -18,7 +54,7 @@ const LANGS = 'eng+heb';
  * @param {(m: {status:string, progress:number}) => void} onProgress
  * @returns {Promise<string>} extracted text
  */
-export async function ocrSource(source, onProgress = () => {}) {
+export async function ocrSource(source, onProgress = () => { }) {
   if (typeof window === 'undefined') throw new Error('OCR requires a browser environment');
 
   // Dynamic import — keeps tesseract.js out of SSR bundle
@@ -40,10 +76,14 @@ export async function ocrSource(source, onProgress = () => {}) {
   });
 
   try {
-    const { data: { text } } = await worker.recognize(source);
-    console.log(text);
+    const processed = await preprocessImage(source);
+
+    const { data: { text } } = await worker.recognize(processed);
+    // const { data: { text } } = await worker.recognize(source);
+
     return text ?? '';
+
   } finally {
-    await worker.terminate().catch(() => {});
+    await worker.terminate().catch(() => { });
   }
 }
