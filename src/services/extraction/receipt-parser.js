@@ -1033,7 +1033,7 @@ export async function parseReceipt(fullText, language, pages = []) {
   let vendorLine = '';
 
   let bankDetected = false;
-  
+
   const BANK_PATTERNS = [
     /\b(?:bank|banken|bankgiro|bankgirot)\b/i,
     /\b(?:בנק|בנקים|בנקאות)\b/i,
@@ -1208,6 +1208,34 @@ export async function parseReceipt(fullText, language, pages = []) {
 
           break;
         }
+      }
+    }
+  }
+  // ============================================================================
+  // Organization / department name
+  // ============================================================================
+
+  if (!vendorName) {
+    for (const line of lines.slice(0, 20)) {
+      const cleaned = line
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      if (!cleaned) continue;
+
+      // Looks like an organization or department name.
+      if (
+        /\b(?:department|management|financial|finance|ministry|authority|agency|administration|university|municipality|council|government|company|limited|ltd|inc|corp|corporation)\b/i.test(cleaned)
+      ) {
+        vendorName = cleaned;
+        vendorLine = cleaned;
+
+        console.log('[VENDOR] Organization name found:', {
+          value: vendorName,
+          line: cleaned
+        });
+
+        break;
       }
     }
   }
@@ -1676,6 +1704,67 @@ export async function parseReceipt(fullText, language, pages = []) {
         grossAmount = v;
         grossAmountLine = line;
         break outer5;
+      }
+    }
+  }
+
+  // ============================================================================
+  // Currency directly followed by amount
+  //
+  // Examples:
+  // EUR 100
+  // USD 50.00
+  // SEK 1836
+  // GBP 25,50
+  // ILS 100
+  // €100
+  // £100
+  // $100
+  // ₪100
+  // ============================================================================
+
+  if (grossAmount === null) {
+    const CURRENCY_AMOUNT_PATTERNS = [
+      // ‘Amount: EUR 850.00
+      /.*?(?:amount|total|grand\s+total|amount\s+due)\s*:\s*(?:EUR|USD|SEK|GBP|ILS|NIS)\s*([0-9][0-9.,\s]*)/i,
+
+      // Amount EUR 850.00 (without colon)
+      /.*?(?:amount|total|grand\s+total|amount\s+due)\s+(?:EUR|USD|SEK|GBP|ILS|NIS)\s*([0-9][0-9.,\s]*)/i,
+
+      // EUR 850.00
+      /\b(?:EUR|USD|SEK|GBP|ILS|NIS)\b\s*([0-9][0-9.,\s]*)/i,
+
+      // €850.00 / £850.00 / $850.00 / ₪850.00
+      /[€£$₪]\s*([0-9][0-9.,\s]*)/i,
+    ];
+
+    outerCurrencyAmount:
+    for (const pattern of CURRENCY_AMOUNT_PATTERNS) {
+      for (const line of lines) {
+        const m = line.match(pattern);
+
+        console.log('[GROSS CURRENCY CHECK]', {
+          line,
+          pattern: pattern.toString(),
+          match: m?.[0] ?? null,
+          amount: m?.[1] ?? null
+        });
+
+        if (!m || !m[1]) continue;
+
+        const v = parseAmount(m[1]);
+
+        if (v !== null && v > 0) {
+          grossAmount = v;
+          grossAmountLine = line;
+
+          console.log('[GROSS] Found currency + amount:', {
+            value: grossAmount,
+            line: grossAmountLine
+          });
+
+          break outerCurrencyAmount;
+        }
       }
     }
   }
