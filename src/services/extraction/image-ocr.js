@@ -9,11 +9,58 @@
  * these files; subsequent runs are fully offline.
  */
 
-const LANGS = 'eng+heb';
+const LANGS = 'eng+heb+swe';
+
+function detectLanguage(text) {
+  const scores = {
+    sv: 0,
+    en: 0,
+    he: 0,
+    de: 0,
+    fr: 0,
+    es: 0,
+  };
+
+  const lower = text.toLowerCase();
+
+  // Swedish
+  if (/\b(kvitto|att betala|varav moms|total pris|pris|referens|telefon|kontrollnummer)\b/i.test(lower)) {
+    scores.sv += 5;
+  }
+
+  // English
+  if (/\b(receipt|total|subtotal|tax|sales tax|amount due|invoice|payment)\b/i.test(lower)) {
+    scores.en += 5;
+  }
+
+  // Hebrew
+  if (/[\u0590-\u05FF]/.test(text)) {
+    scores.he += 5;
+  }
+
+  // German
+  if (/\b(rechnung|quittung|gesamt|mehrwertsteuer|betrag|bezahlt)\b/i.test(lower)) {
+    scores.de += 5;
+  }
+
+  // French
+  if (/\b(reçu|total|tva|montant|paiement|facture)\b/i.test(lower)) {
+    scores.fr += 5;
+  }
+
+  // Spanish
+  if (/\b(recibo|total|iva|importe|pago|factura)\b/i.test(lower)) {
+    scores.es += 5;
+  }
+
+  const [language, score] = Object.entries(scores)
+    .sort((a, b) => b[1] - a[1])[0];
+
+  return score > 0 ? language : null;
+}
 
 async function preprocessImage(source) {
   const image = new Image();
-
   const url = URL.createObjectURL(source);
 
   try {
@@ -24,13 +71,13 @@ async function preprocessImage(source) {
     });
 
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    // Scale image up for OCR
+    // Don't make the image absurdly large.
     const scale = 2;
 
-    canvas.width = image.width * scale;
-    canvas.height = image.height * scale;
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
 
     ctx.drawImage(
       image,
@@ -40,8 +87,39 @@ async function preprocessImage(source) {
       canvas.height
     );
 
-    // Convert to a high-quality JPEG
-    return canvas.toDataURL('image/jpeg', 0.95);
+    const imageData = ctx.getImageData(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+
+    const data = imageData.data;
+
+    // Grayscale + moderate contrast.
+    // Keep the image continuous instead of hard thresholding it.
+    const contrast = 1.5;
+    const midpoint = 128;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const gray =
+        0.299 * data[i] +
+        0.587 * data[i + 1] +
+        0.114 * data[i + 2];
+
+      let value = midpoint + contrast * (gray - midpoint);
+
+      value = Math.max(0, Math.min(255, value));
+
+      data[i] = value;
+      data[i + 1] = value;
+      data[i + 2] = value;
+      // Keep alpha unchanged.
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    return canvas.toDataURL('image/png');
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -54,36 +132,83 @@ async function preprocessImage(source) {
  * @param {(m: {status:string, progress:number}) => void} onProgress
  * @returns {Promise<string>} extracted text
  */
-export async function ocrSource(source, onProgress = () => { }) {
-  if (typeof window === 'undefined') throw new Error('OCR requires a browser environment');
+export async function ocrSource(source, onProgress = () => {}) {
+  if (typeof window === 'undefined') {
+    throw new Error('OCR requires a browser environment');
+  }
 
-  // Dynamic import — keeps tesseract.js out of SSR bundle
-  const { createWorker } = await import('tesseract.js');
+  const { createWorker, PSM } = await import('tesseract.js');
 
   const worker = await createWorker(LANGS, 1, {
     logger: (m) => {
-      const pct = typeof m.progress === 'number' ? m.progress : 0;
-      if (m.status === 'recognizing text') {
-        onProgress({ status: 'Recognizing text', progress: pct });
-      } else if (m.status === 'loading tesseract core') {
-        onProgress({ status: 'Loading OCR engine', progress: pct });
-      } else if (m.status === 'loading language traineddata') {
-        onProgress({ status: 'Loading language data', progress: pct });
-      } else {
-        onProgress({ status: m.status ?? 'Working', progress: pct });
-      }
+      const pct =
+        typeof m.progress === 'number'
+          ? m.progress
+          : 0;
+
+      onProgress({
+        status: m.status ?? 'Working',
+        progress: pct,
+      });
     },
   });
 
   try {
-    const processed = await preprocessImage(source);
+    // ============================================================
+    // FIRST OCR PASS — normal receipt
+    // ============================================================
 
-    const { data: { text } } = await worker.recognize(processed);
-    // const { data: { text } } = await worker.recognize(source);
+    const result = await worker.recognize(source);
 
-    return text ?? '';
+    let text = result?.data?.text ?? '';
+
+    console.log('[OCR] Characters:', text.length);
+    console.log('[OCR] Text:', text);
+
+    // ============================================================
+    // Detect suspicious monetary OCR
+    // ============================================================
+
+    const suspiciousOCR =
+      /\b(?:SEK|kr)\s*\d+(?:[.,]\d+)?\s*%\s*\.?\d*/i.test(text);
+
+    if (suspiciousOCR) {
+      console.warn(
+        '[OCR] Suspicious currency/amount recognition detected'
+      );
+
+      // ============================================================
+      // SECOND OCR PASS
+      //
+      // Treat the image as a block of text instead of trying to
+      // interpret the whole receipt layout.
+      // ============================================================
+
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+      });
+
+      const retry = await worker.recognize(source);
+
+      const retryText = retry?.data?.text ?? '';
+
+      console.log('[OCR RETRY] Text:', retryText);
+
+      // Keep both results.
+      text += '\n' + retryText;
+    }
+
+    const language = detectLanguage(text);
+
+    console.log('[OCR] Detected language:', language);
+
+    return {
+      text,
+      language,
+      suspiciousOCR,
+    };
 
   } finally {
-    await worker.terminate().catch(() => { });
+    await worker.terminate().catch(() => {});
   }
 }

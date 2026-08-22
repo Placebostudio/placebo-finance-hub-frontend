@@ -16,8 +16,42 @@ export function formatCurrency(amount, currency = "ILS", locale = "he-IL") {
 
 export function formatDate(date, format = "short") {
   if (!date) return "—";
-  const d = typeof date === "string" ? new Date(date) : date;
-  if (isNaN(d.getTime())) return "—";
+
+  let year;
+  let month;
+  let day;
+
+  // Date-only string: YYYY-MM-DD
+  // Treat it as a calendar date, NOT a timestamp.
+  if (typeof date === "string") {
+    const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+    if (m) {
+      year = Number(m[1]);
+      month = Number(m[2]);
+      day = Number(m[3]);
+    } else {
+      const d = new Date(date);
+
+      if (isNaN(d.getTime())) return "—";
+
+      year = d.getFullYear();
+      month = d.getMonth() + 1;
+      day = d.getDate();
+    }
+  } else {
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+      return "—";
+    }
+
+    year = date.getFullYear();
+    month = date.getMonth() + 1;
+    day = date.getDate();
+  }
+
+  // Create a local Date only for display formatting.
+  const d = new Date(year, month - 1, day);
+
   if (format === "short") {
     return d.toLocaleDateString("en-GB", {
       year: "numeric",
@@ -25,6 +59,7 @@ export function formatDate(date, format = "short") {
       day: "numeric",
     });
   }
+
   if (format === "long") {
     return d.toLocaleDateString("en-GB", {
       year: "numeric",
@@ -32,9 +67,16 @@ export function formatDate(date, format = "short") {
       day: "numeric",
     });
   }
+
   if (format === "iso") {
-    return d.toISOString().split("T")[0];
+    // IMPORTANT: don't use toISOString().
+    return [
+      String(year).padStart(4, "0"),
+      String(month).padStart(2, "0"),
+      String(day).padStart(2, "0"),
+    ].join("-");
   }
+
   return d.toLocaleDateString();
 }
 
@@ -91,6 +133,7 @@ export function calculateFromGross(grossAmount, vatRate) {
 
 export function parseAmount(value) {
   if (typeof value === "number") return value;
+  if (s.includes('%')) return null;
   const cleaned = String(value).replace(/[^0-9.,-]/g, "").replace(",", ".");
   return parseFloat(cleaned) || 0;
 }
