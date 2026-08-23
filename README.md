@@ -328,3 +328,4 @@ scripts/
 - **No AI / LLM** — all extraction is deterministic (regex, keyword matching, arithmetic). No calls to Claude, OpenAI, or any external API.
 - **Export is client-side** — Excel via SheetJS, PDF via jsPDF with embedded receipt images from IndexedDB.
 - **OCR requires internet on first use** — Tesseract.js downloads its engine and trained-data from jsDelivr CDN on first OCR run (then cached).
+sync test - 23/08/2026 - Erel
