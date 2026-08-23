@@ -9,48 +9,59 @@
  * these files; subsequent runs are fully offline.
  */
 
-const LANGS = 'eng+heb+swe';
+const LANGS = ['eng', 'heb', 'swe'];
 
 function detectLanguage(text) {
+
   const scores = {
-    sv: 0,
-    en: 0,
-    he: 0,
-    de: 0,
-    fr: 0,
-    es: 0,
+    swe: 0,
+    eng: 0,
+    heb: 0,
+    deu: 0,
+    fra: 0,
+    spa: 0,
   };
 
   const lower = text.toLowerCase();
 
   // Swedish
-  if (/\b(kvitto|att betala|varav moms|total pris|pris|referens|telefon|kontrollnummer)\b/i.test(lower)) {
-    scores.sv += 5;
+  if (
+    /\b(kvitto|att betala|varav moms|total pris|pris|referens|telefon|kontrollnummer)\b/i.test(lower)
+  ) {
+    scores.swe += 5;
   }
 
   // English
-  if (/\b(receipt|total|subtotal|tax|sales tax|amount due|invoice|payment)\b/i.test(lower)) {
-    scores.en += 5;
+  if (
+    /\b(receipt|total|subtotal|tax|sales tax|amount due|invoice|payment)\b/i.test(lower)
+  ) {
+    scores.eng += 5;
   }
 
   // Hebrew
   if (/[\u0590-\u05FF]/.test(text)) {
-    scores.he += 5;
+    scores.heb += 5;
   }
 
   // German
-  if (/\b(rechnung|quittung|gesamt|mehrwertsteuer|betrag|bezahlt)\b/i.test(lower)) {
-    scores.de += 5;
+  if (
+    /\b(rechnung|quittung|gesamt|mehrwertsteuer|betrag|bezahlt)\b/i.test(lower)
+  ) {
+    scores.deu += 5;
   }
 
   // French
-  if (/\b(reçu|total|tva|montant|paiement|facture)\b/i.test(lower)) {
-    scores.fr += 5;
+  if (
+    /\b(reçu|total|tva|montant|paiement|facture)\b/i.test(lower)
+  ) {
+    scores.fra += 5;
   }
 
   // Spanish
-  if (/\b(recibo|total|iva|importe|pago|factura)\b/i.test(lower)) {
-    scores.es += 5;
+  if (
+    /\b(recibo|total|iva|importe|pago|factura)\b/i.test(lower)
+  ) {
+    scores.spa += 5;
   }
 
   const [language, score] = Object.entries(scores)
@@ -137,78 +148,158 @@ export async function ocrSource(source, onProgress = () => {}) {
     throw new Error('OCR requires a browser environment');
   }
 
-  const { createWorker, PSM } = await import('tesseract.js');
+  const { createWorker } = await import('tesseract.js');
 
-  const worker = await createWorker(LANGS, 1, {
-    logger: (m) => {
-      const pct =
-        typeof m.progress === 'number'
-          ? m.progress
-          : 0;
+  // ============================================================
+  // TESSERACT LANGUAGE DATA
+  //
+  // Explicitly specify the language-data location.
+  // This prevents Tesseract.js from constructing the broken
+  // jsDelivr URL that was causing the 404.
+  // ============================================================
 
-      onProgress({
-        status: m.status ?? 'Working',
-        progress: pct,
-      });
-    },
-  });
+  let worker = null;
 
   try {
     // ============================================================
-    // FIRST OCR PASS — normal receipt
+    // FIRST OCR WORKER
+    //
+    // Use all supported languages for the first pass.
+    // The purpose of this pass is language detection.
     // ============================================================
 
-    const result = await worker.recognize(source);
+    worker = await createWorker(
+      LANGS,
+      1,
+      {
+        logger: (m) => {
+          const pct =
+            typeof m.progress === 'number'
+              ? m.progress
+              : 0;
 
-    let text = result?.data?.text ?? '';
-
-    console.log('[OCR] Characters:', text.length);
-    console.log('[OCR] Text:', text);
+          onProgress({
+            status:
+              m.status ?? 'OCR (language detection)',
+            progress: pct,
+          });
+        },
+      }
+    );
 
     // ============================================================
-    // Detect suspicious monetary OCR
+    // FIRST OCR PASS
     // ============================================================
 
-    const suspiciousOCR =
-      /\b(?:SEK|kr)\s*\d+(?:[.,]\d+)?\s*%\s*\.?\d*/i.test(text);
+    const result =
+      await worker.recognize(source);
 
-    if (suspiciousOCR) {
+    const firstText =
+      result?.data?.text ?? '';
+
+    console.log(
+      '[OCR FIRST] Characters:',
+      firstText.length
+    );
+
+    console.log(
+      '[OCR FIRST] Text:',
+      firstText
+    );
+
+    // ============================================================
+    // DETECT LANGUAGE
+    // ============================================================
+
+    const detectedLanguage =
+      detectLanguage(firstText);
+
+    console.log(
+      '[OCR] Detected language:',
+      detectedLanguage
+    );
+
+    // ============================================================
+    // IF LANGUAGE WAS NOT DETECTED
+    //
+    // Keep the first OCR result.
+    // ============================================================
+
+    if (!detectedLanguage) {
       console.warn(
-        '[OCR] Suspicious currency/amount recognition detected'
+        '[OCR] Language could not be detected. Using first OCR result.'
       );
 
-      // ============================================================
-      // SECOND OCR PASS
-      //
-      // Treat the image as a block of text instead of trying to
-      // interpret the whole receipt layout.
-      // ============================================================
-
-      await worker.setParameters({
-        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-      });
-
-      const retry = await worker.recognize(source);
-
-      const retryText = retry?.data?.text ?? '';
-
-      console.log('[OCR RETRY] Text:', retryText);
-
-      // Keep both results.
-      text += '\n' + retryText;
+      return {
+        text: firstText,
+        language: null,
+        firstText,
+        secondPass: false,
+      };
     }
 
-    const language = detectLanguage(text);
+    // ============================================================
+    // SECOND PASS
+    //
+    // Re-use the same worker instead of creating another worker.
+    // Tesseract.js supports reinitializing a worker with another
+    // language.
+    // ============================================================
 
-    console.log('[OCR] Detected language:', language);
+    await worker.reinitialize(
+      detectedLanguage,
+      1
+    );
+
+    // ============================================================
+    // SECOND OCR PASS
+    // ============================================================
+
+    const secondResult =
+      await worker.recognize(source);
+
+    const finalText =
+      secondResult?.data?.text ?? '';
+
+    console.log(
+      '[OCR SECOND] Language:',
+      detectedLanguage
+    );
+
+    console.log(
+      '[OCR SECOND] Characters:',
+      finalText.length
+    );
+
+    console.log(
+      '[OCR SECOND] Text:',
+      finalText
+    );
+
+    // ============================================================
+    // RETURN
+    // ============================================================
 
     return {
-      text,
-      language,
-      suspiciousOCR,
+      text: finalText,
+      language: detectedLanguage,
+      firstText,
+      secondPass: true,
     };
 
+  } catch (error) {
+    console.error(
+      '[OCR] Failed:',
+      error
+    );
+
+    throw error;
+
   } finally {
-    await worker.terminate().catch(() => {});
+    if (worker) {
+      await worker
+        .terminate()
+        .catch(() => {});
+    }
   }
 }

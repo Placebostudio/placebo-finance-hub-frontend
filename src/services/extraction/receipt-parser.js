@@ -15,6 +15,12 @@
  */
 
 import { detectCountry, extractAddress, extractCity, geocode, getCountryVatRate } from '@/config/vat-config';
+import {
+  findReferenceInText,
+  getOrFetchCountry,
+  getOrFetchCurrency,
+  getOrFetchLanguage
+} from '@/services/receipt-details-detection';
 
 // ── Keyword dictionaries (extend to add more languages) ──────────────────────
 
@@ -177,6 +183,12 @@ const VAT_RATE_PATTERNS_EN = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GROSS_LABEL_PATTERNS_SV = [
+  // "Totalt inklusive moms (SEK): 129.00"
+  /\btotalt\s+inklusive\s+moms(?:\s*\([^)]+\))?\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // "Totalt inkl. moms (SEK): 129.00"
+  /\btotalt\s+inkl\.?\s+moms(?:\s*\([^)]+\))?\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
   // Existing Swedish patterns
   /\btotal\s+pris\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
 
@@ -370,7 +382,6 @@ const VAT_RATE_PATTERNS_ES = [
   /(\d+(?:[.,]\d+)?)\s*%\s*iva/i,
 ];
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Final language map
 // ─────────────────────────────────────────────────────────────────────────────
@@ -455,65 +466,6 @@ const LANGUAGE_PATTERNS = {
   },
 };
 
-const CURRENCY_DETECTORS = [
-  {
-    code: 'SEK',
-    patterns: [
-      /\bSEK\b/i,
-      /\bkr\b/i,
-      /\bsvenska\s+kronor\b/i,
-    ],
-  },
-
-  {
-    code: 'ILS',
-    patterns: [
-      /\bILS\b/i,
-      /\bNIS\b/i,
-      /₪/,
-      /\bש["׳']?ח\b/i,
-    ],
-  },
-
-  {
-    code: 'EUR',
-    patterns: [
-      /\bEUR\b/i,
-      /€/,
-      /\beuro\b/i,
-    ],
-  },
-
-  {
-    code: 'USD',
-    patterns: [
-      /\bUSD\b/i,
-      /\$/i,
-      /\bdollar\b/i,
-    ],
-  },
-
-  {
-    code: 'GBP',
-    patterns: [
-      /\bGBP\b/i,
-      /£/,
-      /\bpound\b/i,
-    ],
-  },
-];
-
-const COUNTRY_DEFAULT_CURRENCIES = {
-  SE: 'SEK',
-  IL: 'ILS',
-  US: 'USD',
-  GB: 'GBP',
-  DE: 'EUR',
-  FR: 'EUR',
-  IT: 'EUR',
-  ES: 'EUR',
-};
-
 // Lines whose content should never be used as a vendor name
 const VENDOR_SKIP =
   /^(invoice|receipt|payment\s+receipt|payment|tax\s+invoice|bill|statement|date|payment\s+date|total|amount|page|ref|no\.?|billing\s+id|invoice\s+id|customer\s+id|paid\s+with|first\s+card|description|חשבונית|קבלה|מסמך)/i;
@@ -583,12 +535,11 @@ function missing() {
 }
 
 /** Parse a date string into ISO YYYY-MM-DD. Returns null if not parseable. */
-function parseDate(raw) {
+function parseDate(raw, countryCode = null) {
   if (!raw) return null;
 
   const s = String(raw).trim();
 
-  // Helper: return YYYY-MM-DD WITHOUT timezone conversion.
   function formatLocalDate(year, month, day) {
     return (
       `${String(year).padStart(4, '0')}-` +
@@ -597,7 +548,22 @@ function parseDate(raw) {
     );
   }
 
-  // YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  function isValidDate(year, month, day) {
+    const d = new Date(year, month - 1, day);
+
+    return (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    );
+  }
+
+  const country = String(countryCode || '').toUpperCase();
+
+  // ============================================================
+  // ISO: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  // ============================================================
+
   let m = s.match(
     /\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/
   );
@@ -607,58 +573,85 @@ function parseDate(raw) {
     const month = Number(m[2]);
     const day = Number(m[3]);
 
-    console.log('[parseDate] YYYY-MM-DD match:', {
-      raw: s,
-      year,
-      month,
-      day
-    });
-
-    const d = new Date(year, month - 1, day);
-
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
-    ) {
+    if (isValidDate(year, month, day)) {
       return formatLocalDate(year, month, day);
     }
 
     return null;
   }
 
-  // DD/MM/YYYY / DD-MM-YYYY / DD.MM.YYYY
+  // ============================================================
+  // Compact ISO: YYYYMMDD
+  //
+  // 20260528 → 2026-05-28
+  // ============================================================
+
+  m = s.match(
+    /\b(\d{4})(\d{2})(\d{2})\b/
+  );
+
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+
+    if (isValidDate(year, month, day)) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // Numeric dates
+  //
+  // US → MM/DD/YYYY
+  // Most European countries → DD/MM/YYYY
+  // Germany → DD.MM.YYYY
+  // ============================================================
+
   m = s.match(
     /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/
   );
 
   if (m) {
-    const day = Number(m[1]);
-    const month = Number(m[2]);
+    const first = Number(m[1]);
+    const second = Number(m[2]);
     const year = Number(m[3]);
 
-    const d = new Date(year, month - 1, day);
+    let day;
+    let month;
 
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
-    ) {
+    // US uses MM/DD/YYYY
+    if (country === 'US') {
+      month = first;
+      day = second;
+    }
+
+    // Most European / Israeli formats use DD/MM/YYYY
+    else {
+      day = first;
+      month = second;
+    }
+
+    if (isValidDate(year, month, day)) {
       return formatLocalDate(year, month, day);
     }
 
     return null;
   }
 
-  // DD/MM/YY
+  // ============================================================
+  // DD/MM/YY or MM/DD/YY
+  // ============================================================
+
   m = s.match(
     /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})\b/
   );
 
   if (m) {
-    const day = Number(m[1]);
-    const month = Number(m[2]);
-
+    const first = Number(m[1]);
+    const second = Number(m[2]);
     const shortYear = Number(m[3]);
 
     const year =
@@ -666,21 +659,31 @@ function parseDate(raw) {
         ? 2000 + shortYear
         : 1900 + shortYear;
 
-    const d = new Date(year, month - 1, day);
+    let day;
+    let month;
 
-    if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
-    ) {
+    if (country === 'US') {
+      month = first;
+      day = second;
+    } else {
+      day = first;
+      month = second;
+    }
+
+    if (isValidDate(year, month, day)) {
       return formatLocalDate(year, month, day);
     }
 
     return null;
   }
 
+  // ============================================================
+  // Month name
+  //
   // April 15, 2026
   // Apr 15, 2026
+  // ============================================================
+
   m = s.match(
     /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{4})\b/i
   );
@@ -717,19 +720,9 @@ function parseDate(raw) {
     const day = Number(m[2]);
     const year = Number(m[3]);
 
-    console.log('[parseDate] Month-name match:', {
-      raw: s,
-      year,
-      month,
-      day
-    });
-
-    const d = new Date(year, month - 1, day);
-
     if (
-      d.getFullYear() === year &&
-      d.getMonth() === month - 1 &&
-      d.getDate() === day
+      month !== undefined &&
+      isValidDate(year, month, day)
     ) {
       return formatLocalDate(year, month, day);
     }
@@ -737,111 +730,109 @@ function parseDate(raw) {
     return null;
   }
 
+  // ============================================================
   // DD Month YYYY
-  // Examples:
+  //
   // 15 April 2026
   // 15 Apr 2026
-  // 15th April 2026
+  // ============================================================
+
   m = s.match(
     /\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{4})\b/i
   );
 
   if (m) {
     const months = {
-      jan: 0,
-      january: 0,
-      feb: 1,
-      february: 1,
-      mar: 2,
-      march: 2,
-      apr: 3,
-      april: 3,
-      may: 4,
-      jun: 5,
-      june: 5,
-      jul: 6,
-      july: 6,
-      aug: 7,
-      august: 7,
-      sep: 8,
-      sept: 8,
-      september: 8,
-      oct: 9,
-      october: 9,
-      nov: 10,
-      november: 10,
-      dec: 11,
-      december: 11,
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
     };
 
     const day = Number(m[1]);
     const month = months[m[2].toLowerCase()];
     const year = Number(m[3]);
 
-    if (month === undefined) return null;
-
-    // IMPORTANT:
-    // Don't create a Date object, because that can introduce
-    // timezone-related day changes.
-    const result =
-      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
-    console.log('[parseDate] DD Month YYYY match:', {
-      raw: s,
-      result,
-      year,
-      month: month + 1,
-      day
-    });
-
-    return result;
+    if (
+      month !== undefined &&
+      isValidDate(year, month, day)
+    ) {
+      return formatLocalDate(year, month, day);
+    }
   }
 
   return null;
 }
 
 /** Find first ISO date in a string fragment. */
-function extractDateFromFragment(frag) {
+function extractDateFromFragment(frag, countryCode = null) {
+  if (!frag) return null;
+
   const text = String(frag).trim();
   const lower = text.toLowerCase();
 
   const candidates = [
+    // YYYYMMDD
+    ...text.matchAll(
+      /\b\d{8}\b/g
+    ),
+
     // YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
     ...text.matchAll(
-      /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/g
+      /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b/g
     ),
 
     // DD/MM/YYYY / DD-MM-YYYY / DD.MM.YYYY
     ...text.matchAll(
-      /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}\b/g
+      /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b/g
     ),
 
     // DD/MM/YY
     ...text.matchAll(
-      /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2}\b/g
+      /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2}\b/g
     ),
 
-    // October 27, 2023 / oct 27, 2023
+    // October 27, 2023 / Oct 27, 2023
     ...lower.matchAll(
       /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b/g
     ),
 
-    // 27 October 2023 / 27 oct 2023
+    // 27 October 2023 / 27 Oct 2023
     ...lower.matchAll(
       /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[,\s]+\d{4}\b/g
     ),
   ];
 
-  for (const m of candidates) {
-    const d = parseDate(m[0]);
-    if (d) return d;
+  for (const match of candidates) {
+    const date = parseDate(match[0], countryCode);
+
+    if (date) {
+      return date;
+    }
   }
 
-  // Fallback: let parseDate try the entire fragment.
-  const direct = parseDate(text);
-  if (direct) return direct;
-
-  return null;
+  // Last attempt: let parseDate inspect the entire fragment.
+  return parseDate(text, countryCode);
 }
 
 /** Parse a monetary amount string to a positive float or null. */
@@ -854,30 +845,35 @@ function parseAmount(raw) {
 
   if (!s) return null;
 
-  // Both comma and dot exist:
+  // Both comma and dot:
   // 1.234,56 -> 1234.56
   // 1,234.56 -> 1234.56
   if (s.includes(',') && s.includes('.')) {
     if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      // European format
       s = s.replace(/\./g, '').replace(',', '.');
     } else {
+      // US format
       s = s.replace(/,/g, '');
     }
   }
 
   // Only comma:
   // 275,65 -> 275.65
+  // 1,275 -> 1275
   else if (s.includes(',')) {
     const parts = s.split(',');
 
-    if (parts.length === 2 && parts[1].length === 2) {
+    if (
+      parts.length === 2 &&
+      parts[1].length === 2
+    ) {
       s = s.replace(',', '.');
     } else {
       s = s.replace(/,/g, '');
     }
   }
 
-  // Only dot = normal decimal
   const value = Number(s);
 
   return Number.isFinite(value) ? value : null;
@@ -885,74 +881,136 @@ function parseAmount(raw) {
 
 /** Find amounts (>0) in a line; returns the last match (totals are usually rightmost). */
 function findAmountInLine(line) {
+  if (!line) return null;
+
   const patterns = [
-    /[\d]{1,3}(?:[,. ]?\d{3})*[,.]\d{2}/g,
-    /[\d]+[,.]\d{2}/g,
+    // 1,234.56 / 1.234,56 / 1234.56 / 1234,56
+    /\d{1,3}(?:[,. ]\d{3})*[,.]\d{2}/g,
+
+    // Simple decimal
+    /\d+[,.]\d{2}/g,
   ];
+
   let best = null;
-  for (const p of patterns) {
-    const matches = [...line.matchAll(p)];
-    if (matches.length > 0) {
-      const raw = matches[matches.length - 1][0];
-      const v = parseAmount(raw);
-      if (v !== null && v > 0) best = { value: v, raw };
+
+  for (const pattern of patterns) {
+    const matches = [...String(line).matchAll(pattern)];
+
+    if (matches.length === 0) {
+      continue;
     }
-    if (best) break;
+
+    // Totals are commonly the rightmost amount on the line.
+    const raw = matches[matches.length - 1][0];
+    const value = parseAmount(raw);
+
+    if (value !== null && value > 0) {
+      best = {
+        value,
+        raw,
+      };
+
+      break;
+    }
   }
+
   return best;
 }
 
-function detectCurrency(text) {
+async function detectCurrency(text) {
   if (!text) return null;
 
+  const normalizedText = String(text);
+
   // ============================================================
-  // 1. Check explicit currencies FIRST.
-  //    This prevents generic "kr" from winning over € / £ / $
+  // 1. Check localStorage reference data first
   // ============================================================
 
-  const explicitCurrencyCodes = [
-    'EUR',
-    'GBP',
-    'USD',
-    'ILS',
-    'SEK',
-  ];
+  const localMatch =
+    findReferenceInText(normalizedText);
 
-  for (const code of explicitCurrencyCodes) {
-    const detector = CURRENCY_DETECTORS.find(
-      (d) => d.code === code
+  if (
+    localMatch &&
+    localMatch.type === 'currency' &&
+    localMatch.value?.currencyCode
+  ) {
+    return localMatch.value.currencyCode.toUpperCase();
+  }
+
+  // ============================================================
+  // 2. Look for an explicit 3-letter currency code
+  //
+  // This works for ALL currencies, not just EUR/USD/SEK/etc.
+  //
+  // Examples:
+  // CAD
+  // JPY
+  // AUD
+  // CHF
+  // NOK
+  // DKK
+  // PLN
+  // INR
+  // etc.
+  // ============================================================
+
+  const currencyCodeMatch =
+    normalizedText.match(
+      /\b[A-Z]{3}\b/gi
     );
 
-    if (!detector) continue;
+  if (currencyCodeMatch) {
 
-    // For SEK, skip the generic "kr" pattern here.
-    // It will be checked only as a fallback below.
-    const patterns =
-      code === 'SEK'
-        ? detector.patterns.filter(
-          (p) => p.toString() !== '/\\bkr\\b/i'
-        )
-        : detector.patterns;
+    for (const possibleCode of currencyCodeMatch) {
 
-    if (patterns.some((p) => p.test(text))) {
-      return code;
+      const code =
+        possibleCode.toUpperCase();
+
+      try {
+
+        const currencies =
+          await getOrFetchCurrency(code);
+
+        if (
+          Array.isArray(currencies) &&
+          currencies.length > 0
+        ) {
+          return code;
+        }
+
+      } catch (error) {
+
+        console.warn(
+          '[OCR] Currency lookup failed:',
+          code,
+          error
+        );
+
+      }
     }
   }
 
   // ============================================================
-  // 2. "kr" is ambiguous, so use it only as a fallback.
+  // 3. Check reference data again
+  //
+  // The previous API lookup may have added new currency
+  // information to localStorage.
   // ============================================================
 
-  const sekDetector = CURRENCY_DETECTORS.find(
-    (d) => d.code === 'SEK'
-  );
+  const apiMatch =
+    findReferenceInText(normalizedText);
 
   if (
-    sekDetector &&
-    sekDetector.patterns.some((p) => p.test(text))
+    apiMatch &&
+    apiMatch.type === 'currency' &&
+    apiMatch.value?.currencyCode
   ) {
-    return 'SEK';
+    return apiMatch.value.currencyCode.toUpperCase();
   }
+
+  // ============================================================
+  // 4. No currency found
+  // ============================================================
 
   return null;
 }
@@ -976,33 +1034,64 @@ export async function parseReceipt(fullText, language, pages = []) {
 
   // Normalize language.
   // OCR may return something slightly different depending on the OCR library.
-  const normalizedLanguage =
-    language === 'swe' ||
-      language === 'sv' ||
-      language === 'swe+eng'
-      ? 'swe'
-      : language === 'heb' ||
-        language === 'he'
-        ? 'heb'
-        : language === 'deu' ||
-          language === 'de'
-          ? 'deu'
-          : language === 'fra' ||
-            language === 'fr'
-            ? 'fra'
-            : language === 'spa' ||
-              language === 'es'
-              ? 'spa'
-              : 'eng';
+  let normalizedLanguage =
+    language
+      ? String(language).toLowerCase()
+      : null;
+
+  // Common OCR language codes
+  const languageAliases = {
+    eng: 'eng',
+    en: 'eng',
+
+    swe: 'swe',
+    sv: 'swe',
+    'swe+eng': 'swe',
+
+    heb: 'heb',
+    he: 'heb',
+
+    deu: 'deu',
+    de: 'deu',
+
+    fra: 'fra',
+    fr: 'fra',
+
+    spa: 'spa',
+    es: 'spa',
+  };
+
+  normalizedLanguage =
+    languageAliases[normalizedLanguage] ??
+    normalizedLanguage ??
+    'eng';
+
+  let countryCode = null;
+  let referenceCountry = null;
+  // ============================================================
+  // LANGUAGE PATTERNS
+  //
+  // Use the patterns we already have.
+  // Reference-data API is used for identifying countries,
+  // currencies and languages, not for replacing these regex
+  // patterns.
+  // ============================================================
 
   let languagePatterns =
-    LANGUAGE_PATTERNS[normalizedLanguage] ||
+    LANGUAGE_PATTERNS[normalizedLanguage] ??
     LANGUAGE_PATTERNS.eng;
 
-  let grossPatterns = languagePatterns.gross;
-  let netPatterns = languagePatterns.net;
-  let vatAmountPatterns = languagePatterns.vatAmount;
-  let vatRatePatterns = languagePatterns.vatRate;
+  let grossPatterns =
+    languagePatterns.gross;
+
+  let netPatterns =
+    languagePatterns.net;
+
+  let vatAmountPatterns =
+    languagePatterns.vatAmount;
+
+  let vatRatePatterns =
+    languagePatterns.vatRate;
 
   // ============================================================================
   // Document type
@@ -1031,13 +1120,6 @@ export async function parseReceipt(fullText, language, pages = []) {
 
   let vendorName = null;
   let vendorLine = '';
-
-  let bankDetected = false;
-
-  const BANK_PATTERNS = [
-    /\b(?:bank|banken|bankgiro|bankgirot)\b/i,
-    /\b(?:בנק|בנקים|בנקאות)\b/i,
-  ];
 
   // ============================================================================
   // 1. Explicit "Sold by" — highest priority
@@ -1335,6 +1417,22 @@ export async function parseReceipt(fullText, language, pages = []) {
     : missing();
 
   // ============================================================================
+  // Country reference
+  // ============================================================================
+
+  const referenceMatch = findReferenceInText(fullText);
+
+  if (
+    referenceMatch?.type === 'country' &&
+    referenceMatch.value?.countryCode
+  ) {
+    countryCode = referenceMatch.value.countryCode;
+    referenceCountry = referenceMatch.value;
+  }
+
+  console.log('[REFERENCE] Country:', countryCode);
+
+  // ============================================================================
   // Document date
   // ============================================================================
 
@@ -1346,7 +1444,7 @@ export async function parseReceipt(fullText, language, pages = []) {
       const m = line.match(pattern);
 
       if (m) {
-        const d = extractDateFromFragment(m[1] ?? m[0]);
+        const d = extractDateFromFragment(m[1] ?? m[0], countryCode);
 
         if (d) {
           docDate = d;
@@ -1359,7 +1457,7 @@ export async function parseReceipt(fullText, language, pages = []) {
 
   if (!docDate) {
     for (const line of lines.slice(0, 20)) {
-      const d = extractDateFromFragment(line);
+      const d = extractDateFromFragment(line, countryCode);
 
       if (d) {
         docDate = d;
@@ -1385,7 +1483,7 @@ export async function parseReceipt(fullText, language, pages = []) {
       const m = line.match(pattern);
 
       if (m) {
-        const d = extractDateFromFragment(m[1] ?? m[0]);
+        const d = extractDateFromFragment(m[1] ?? m[0], countryCode);
 
         if (d && d !== docDate) {
           dueDate = d;
@@ -1609,7 +1707,7 @@ export async function parseReceipt(fullText, language, pages = []) {
   // Currency
   // ============================================================================
 
-  const currency = detectCurrency(fullText);
+  const currency = await detectCurrency(fullText);
 
   if (currency) {
     fields.currency = makeField(
