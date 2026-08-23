@@ -14,28 +14,54 @@
  * The country field also includes: { countryName, confidence, reason }
  */
 
-import { detectCountry, getCountryVatRate } from '@/config/vat-config';
+import { detectCountry, extractAddress, extractCity, geocode, getCountryVatRate } from '@/config/vat-config';
+import {
+  findReferenceInText,
+  getOrFetchCountry,
+  getOrFetchCurrency,
+  getOrFetchLanguage
+} from '@/services/receipt-details-detection';
 
 // ── Keyword dictionaries (extend to add more languages) ──────────────────────
 
 const DOCUMENT_TYPE_PATTERNS = {
   invoice: /\b(invoice|חשבונית|bill|billing|faktura|factura|rechnung)\b/i,
+
   receipt: /\b(receipt|קבלה|reçu|quittung|ricevuta|kvitto)\b/i,
+
   credit_note: /\b(credit\s*note|credit\s*memo|gutschrift|note\s*de\s*crédit)\b/i,
+
+  withdrawal: /\b(withdrawal|withdraw|cash\s*withdrawal|משיכה)\b/i,
+
+  deposit: /\b(deposit|cash\s*deposit|הפקדה)\b/i,
 };
 
 const INVOICE_NUMBER_PATTERNS = [
-  /invoice\s*(?:no\.?|number|num\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /inv\.?\s*(?:no\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:receipt|ref(?:erence)?)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:order|po)\s*(?:no\.?|number|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /(?:חשבונית|קבלה|מספר)\s*:?\s*([A-Z0-9][A-Z0-9\-\/]{2,20})/i,
-  /#\s*([A-Z0-9][A-Z0-9\-\/]{3,20})\b/i,
+  // Invoice No / Invoice Number / Invoice #
+  /(?:invoice|inv\.?)\s*(?:no\.?|number|num\.?|#)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,30})/i,
+
+  // Receipt No / Receipt Number / Receipt #
+  /(?:receipt)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,30})/i,
+
+  // Order No / PO No
+  /(?:order|po)\s*(?:no\.?|number|num\.?|#)\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,30})/i,
+
+  // Hebrew labels
+  /(?:חשבונית|קבלה|מספר)\s*(?:מספר)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,30})/i,
+
+  // Explicit # followed by a number/code
+  /#\s*([A-Z0-9][A-Z0-9\-\/]{3,30})\b/i,
+
+  // Standalone invoice-like numeric IDs.
+  // Requires at least one digit and either a separator or 6+ digits.
+  /\b(\d{4,}(?:[-\/]\d{3,})+)\b/,
+  /\b(\d{6,})\b/,
 ];
 
 const DATE_LABEL_PATTERNS = [
   /(?:invoice|document|issued?|receipt|bill|billing|trans(?:action)?)\s*date\s*[:\-]?\s*(.+)/i,
   /(?:date|תאריך)\s*[:\-]\s*(.+)/i,
+  /\bpayment\s+date\s*:?\s*(.+)$/i
 ];
 
 const DUE_DATE_LABEL_PATTERNS = [
@@ -43,136 +69,949 @@ const DUE_DATE_LABEL_PATTERNS = [
   /(?:תשלום\s+עד|לתשלום\s+עד)\s*[:\-]?\s*(.+)/i,
 ];
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// General patterns
+// These are language-independent / shared patterns.
+// ─────────────────────────────────────────────────────────────────────────────
+const MONEY_PREFIX = '(?:US\\$|USD|[$€£₪])?\\s*';
+
 const GROSS_LABEL_PATTERNS = [
-  /(?:grand\s+)?total\s+(?:amount\s+)?(?:due|paid|payable)?\s*[:\-]?\s*([\d,. ]+)/i,
-  /amount\s+(?:due|total|paid|payable)\s*[:\-]?\s*([\d,. ]+)/i,
-  /total\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:סה"כ|סכום\s+כולל|לתשלום|סה"כ\s+לתשלום)\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:summe\s+gesamt|montant\s+total|importe\s+total)\s*[:\-]?\s*([\d,. ]+)/i,
+  // Amount Received: 328.88
+  new RegExp(
+    `(?:amount\\s+received|amount\\s+paid|amount\\s+payable)\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
+
+  // Grand Total / Total Amount / Total Due
+  new RegExp(
+    `(?:grand\\s+)?total\\s+(?:amount\\s+)?(?:due|paid|payable)\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
+
+  // Amount Due / Amount Total / Amount Paid
+  new RegExp(
+    `amount\\s+(?:due|total|paid|payable)\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
+
+  // Total $14.99 / Total USD 14.99
+  new RegExp(
+    `\\btotal\\b\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
+
+  // Hebrew
+  new RegExp(
+    `(?:סה"כ|סכום\\s+כולל|לתשלום|סה"כ\\s+לתשלום)\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
+
+  // German / French / Spanish
+  new RegExp(
+    `(?:summe\\s+gesamt|montant\\s+total|importe\\s+total)\\s*[:\\-]?\\s*${MONEY_PREFIX}([\\d,. ]+)`,
+    'i'
+  ),
 ];
 
 const NET_LABEL_PATTERNS = [
-  /(?:sub\s*total|net\s+amount|taxable\s+amount|before\s+tax|exc(?:l)?\.?\s+(?:vat|tax))\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:netto|montant\s+ht|base\s+imponible|subtotal)\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:סה"כ\s+לפני\s+מע"מ|לפני\s+מע"מ|נטו)\s*[:\-]?\s*([\d,. ]+)/i,
+  /(?:subtotal|sub[\s-]?total|net(?:\s+amount)?|before\s+tax)\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
 ];
 
 const VAT_AMOUNT_LABEL_PATTERNS = [
-  /(?:vat|gst|hst|pst|tva|mwst|iva|מע"מ)\s*(?:amount)?\s*(?:@\s*[\d.]+\s*%)?\s*[:\-]?\s*([\d,. ]+)/i,
-  /(?:tax|מס\s+ערך\s+מוסף)\s*(?:amount)?\s*[:\-]?\s*([\d,. ]+)/i,
+  // Tax (13%) 456.30
+  /(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס\s+ערך\s+מוסף)\s*\(?\s*[\d.]+\s*%\s*\)?\s*[$€£₪]?\s*([\d,. ]+)/i,
+
+  // VAT amount: 456.30
+  /(?:vat|gst|hst|pst|tva|mwst|iva|מע"מ)\s+(?:amount)\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+
+  // Tax: 456.30
+  /(?:tax|מס\s+ערך\s+מוסף)\s*[:\-]\s*[$€£₪]?\s*([\d,. ]+)/i,
 ];
 
 const VAT_RATE_PATTERNS = [
-  /(?:vat|tax|gst|מע"מ|מס)\s*@?\s*([\d.]+)\s*%/i,
-  /([\d.]+)\s*%\s*(?:vat|tax|gst|מע"מ|מס)/i,
+  // Tax (13%)
+  /(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס)\s*\(?\s*([\d.]+)\s*%\s*\)?/i,
+
+  // 13% Tax
+  /([\d.]+)\s*%\s*(?:vat|tax|gst|hst|pst|tva|mwst|iva|מע"מ|מס)/i,
 ];
 
-const CURRENCY_DETECTORS = [
-  { code: 'ILS', patterns: [/₪/, /\bils\b/i, /\bnis\b/i, /שקל/, /ש"ח/] },
-  { code: 'USD', patterns: [/\$/, /\busd\b/i, /\bus\s*dollar/i] },
-  { code: 'EUR', patterns: [/€/, /\beur\b/i, /\beuro\b/i] },
-  { code: 'GBP', patterns: [/£/, /\bgbp\b/i, /\bsterling\b/i, /\bpound\b/i] },
-  { code: 'CHF', patterns: [/\bchf\b/i, /\bswiss\s*franc\b/i] },
-  { code: 'SEK', patterns: [/\bsek\b/i] },
+
+// ─────────────────────────────────────────────────────────────────────────────
+// English patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_EN = [
+  /\bgrand\s+total\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\btotal\s+amount\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bamount\s+due\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bamount\s+payable\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\btotal\s+paid\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /(?:^|\s)total\s*[:\-]\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /(?:^|\s)total\s+[$€£₪]?\s*([\d,. ]+)/i,
 ];
+
+const NET_LABEL_PATTERNS_EN = [
+  /\bnet\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bnet\s+amount\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bsubtotal\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bsub[\s-]total\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bamount\s+before\s+tax\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bbefore\s+tax\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_EN = [
+  /\bvat\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bvat\s+amount\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\bsales\s+tax\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\btax\s+amount\b\s*[:\-]?\s*[$€£₪]?\s*([\d,. ]+)/i,
+  /\btax\b\s*[:\-]\s*[$€£₪]?\s*([\d,. ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_EN = [
+  /\bvat\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /\bvat\s+rate\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /\btax\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /\bsales\s+tax\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /(\d+(?:[.,]\d+)?)\s*%\s*vat\b/i,
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Swedish patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_SV = [
+  // "Totalt inklusive moms (SEK): 129.00"
+  /\btotalt\s+inklusive\s+moms(?:\s*\([^)]+\))?\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // "Totalt inkl. moms (SEK): 129.00"
+  /\btotalt\s+inkl\.?\s+moms(?:\s*\([^)]+\))?\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Existing Swedish patterns
+  /\btotal\s+pris\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  /\batt\s+betala\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  /\btotalt\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  /\bsumma\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  /\btotalsumma\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Amount before Swedish currency
+  /\btotalt\b.*?([\d.,]+)\s*(?:kr|sek)\b/i,
+
+  // "Totalt sex 39,00 kr"
+  /\btotalt\s+\w+(?:\s+\w+)?\s+([\d.,]+)\s*(?:kr|sek)\b/i,
+
+  // ------------------------------------------------------------
+  // Generic currency amount fallback
+  // ------------------------------------------------------------
+
+  // Currency BEFORE amount:
+  // £100
+  // €100
+  // € 100
+  // SEK 100
+  // EUR 100
+  /(?:£|€|\$|kr|sek|eur|gbp|usd)\s*([\d]+(?:[.,]\d{1,2})?)/i,
+
+  // Amount BEFORE currency:
+  // 100 £
+  // 100 €
+  // 100 kr
+  // 100 SEK
+  /([\d]+(?:[.,]\d{1,2})?)\s*(?:£|€|\$|kr|sek|eur|gbp|usd)\b/i,
+
+  // Label + currency + amount:
+  // "Subtotal £100"
+  // "Total €1836"
+  // "Amount SEK 1836"
+  /(?:subtotal|total|totalt|summa|amount|belopp)\b.*?(?:£|€|\$|kr|sek|eur|gbp|usd)\s*([\d]+(?:[.,]\d{1,2})?)/i,
+
+  // Label + amount + currency:
+  // "Subtotal 100 £"
+  // "Totalt 39,00 kr"
+  /(?:subtotal|total|totalt|summa|amount|belopp)\b.*?([\d]+(?:[.,]\d{1,2})?)\s*(?:£|€|\$|kr|sek|eur|gbp|usd)\b/i,
+];
+
+const NET_LABEL_PATTERNS_SV = [
+  // Netto: 220,52
+  /\bnetto\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Netto belopp: 220,52
+  /\bnetto\s+belopp\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Belopp exkl moms: 220,52
+  /\bbelopp\s+exkl\.?\s+moms\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Summa exkl moms: 220,52
+  /\bsumma\s+exkl\.?\s+moms\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_SV = [
+  // VARAV MOMS 55,13
+  /\bvarav\s+moms\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Moms: 55,13
+  /\bmoms\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+
+  // Momsbelopp: 55,13
+  /\bmomsbelopp\b\s*[:\-]?\s*[kr€$£]?\s*([\d,. ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_SV = [
+  // Moms 25%
+  /\bmoms\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+
+  // Momssats 25%
+  /\bmomssats\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+
+  // 25% moms
+  /(\d+(?:[.,]\d+)?)\s*%\s*moms\b/i,
+
+  // VAT table: 12% 318.00 283.93 34.07
+  /(\d+(?:[.,]\d+)?)\s*%/i,
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hebrew patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_HE = [
+  /(?:סה["״']?כ\s+לתשלום)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /(?:סכום\s+כולל)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /(?:לתשלום)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /(?:סה["״']?כ)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /(?:סכום\s+לתשלום)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /(?:סהכ\s+לתשלום)\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+];
+
+const NET_LABEL_PATTERNS_HE = [
+  /לפני\s+מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /ללא\s+מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /סכום\s+לפני\s+מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /סה["״']?כ\s+לפני\s+מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_HE = [
+  /מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /סכום\s+מע["״']?מ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /מעמ\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+  /מס\s+ערך\s+מוסף\s*[:\-]?\s*₪?\s*([\d,. ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_HE = [
+  /מע["״']?מ\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /מעמ\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /שיעור\s+מע["״']?מ\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /(\d+(?:[.,]\d+)?)\s*%\s*מע["״']?מ/i,
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// German patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_DE = [
+  /(?:gesamtbetrag|gesamt\s+betrag|rechnungsbetrag|endbetrag)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+  /(?:zu\s+zahlen|zahlbetrag)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+  /(?:gesamtsumme|summe)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const NET_LABEL_PATTERNS_DE = [
+  /(?:nettobetrag|netto)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+  /(?:zwischensumme|zwischen\s+summe)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_DE = [
+  /(?:mwst|mwst\.|mehrwertsteuer|umsatzsteuer)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+  /(?:mwstbetrag|steuerbetrag)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_DE = [
+  /(?:mwst|mwst\.|mehrwertsteuer|umsatzsteuer)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /(\d+(?:[.,]\d+)?)\s*%\s*(?:mwst|mwst\.|mehrwertsteuer|umsatzsteuer)/i,
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// French patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_FR = [
+  /(?:total\s+ttc|montant\s+total|total\s+à\s+payer|net\s+à\s+payer)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+  /(?:total)\s*[:\-]\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const NET_LABEL_PATTERNS_FR = [
+  /(?:sous-total|sous\s+total|total\s+ht|montant\s+ht)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_FR = [
+  /(?:tva|montant\s+tva|taxe)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_FR = [
+  /(?:tva|taux\s+de\s+tva)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /(\d+(?:[.,]\d+)?)\s*%\s*(?:tva)/i,
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spanish patterns
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROSS_LABEL_PATTERNS_ES = [
+  /(?:importe\s+total|total\s+a\s+pagar|total\s+factura|total)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const NET_LABEL_PATTERNS_ES = [
+  /(?:subtotal|base\s+imponible|importe\s+neto)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_AMOUNT_LABEL_PATTERNS_ES = [
+  /(?:iva|importe\s+iva|impuesto)\s*[:\-]?\s*[€$£]?\s*([\d., ]+)/i,
+];
+
+const VAT_RATE_PATTERNS_ES = [
+  /(?:iva|tipo\s+iva)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)\s*%/i,
+  /(\d+(?:[.,]\d+)?)\s*%\s*iva/i,
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Final language map
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LANGUAGE_PATTERNS = {
+  eng: {
+    gross: GROSS_LABEL_PATTERNS_EN,
+    net: NET_LABEL_PATTERNS_EN,
+    vatAmount: VAT_AMOUNT_LABEL_PATTERNS_EN,
+    vatRate: VAT_RATE_PATTERNS_EN,
+  },
+
+  swe: {
+    gross: GROSS_LABEL_PATTERNS_SV,
+    net: NET_LABEL_PATTERNS_SV,
+    vatAmount: VAT_AMOUNT_LABEL_PATTERNS_SV,
+    vatRate: VAT_RATE_PATTERNS_SV,
+  },
+
+  heb: {
+    gross: GROSS_LABEL_PATTERNS_HE,
+    net: NET_LABEL_PATTERNS_HE,
+    vatAmount: VAT_AMOUNT_LABEL_PATTERNS_HE,
+    vatRate: VAT_RATE_PATTERNS_HE,
+  },
+
+  deu: {
+    gross: [
+      ...GROSS_LABEL_PATTERNS,
+      ...GROSS_LABEL_PATTERNS_DE,
+    ],
+    net: [
+      ...NET_LABEL_PATTERNS,
+      ...NET_LABEL_PATTERNS_DE,
+    ],
+    vatAmount: [
+      ...VAT_AMOUNT_LABEL_PATTERNS,
+      ...VAT_AMOUNT_LABEL_PATTERNS_DE,
+    ],
+    vatRate: [
+      ...VAT_RATE_PATTERNS,
+      ...VAT_RATE_PATTERNS_DE,
+    ],
+  },
+
+  fra: {
+    gross: [
+      ...GROSS_LABEL_PATTERNS,
+      ...GROSS_LABEL_PATTERNS_FR,
+    ],
+    net: [
+      ...NET_LABEL_PATTERNS,
+      ...NET_LABEL_PATTERNS_FR,
+    ],
+    vatAmount: [
+      ...VAT_AMOUNT_LABEL_PATTERNS,
+      ...VAT_AMOUNT_LABEL_PATTERNS_FR,
+    ],
+    vatRate: [
+      ...VAT_RATE_PATTERNS,
+      ...VAT_RATE_PATTERNS_FR,
+    ],
+  },
+
+  spa: {
+    gross: [
+      ...GROSS_LABEL_PATTERNS,
+      ...GROSS_LABEL_PATTERNS_ES,
+    ],
+    net: [
+      ...NET_LABEL_PATTERNS,
+      ...NET_LABEL_PATTERNS_ES,
+    ],
+    vatAmount: [
+      ...VAT_AMOUNT_LABEL_PATTERNS,
+      ...VAT_AMOUNT_LABEL_PATTERNS_ES,
+    ],
+    vatRate: [
+      ...VAT_RATE_PATTERNS,
+      ...VAT_RATE_PATTERNS_ES,
+    ],
+  },
+};
 
 // Lines whose content should never be used as a vendor name
-const VENDOR_SKIP = /^(invoice|receipt|tax\s+invoice|bill|statement|date|total|amount|page|ref|no\.|חשבונית|קבלה|מסמך)/i;
+const VENDOR_SKIP =
+  /^(invoice|receipt|payment\s+receipt|payment|tax\s+invoice|bill|statement|date|payment\s+date|total|amount|page|ref|no\.?|billing\s+id|invoice\s+id|customer\s+id|paid\s+with|first\s+card|description|חשבונית|קבלה|מסמך)/i;
+
+const PAYMENT_KEYWORDS =
+  /\b(?:paid|payment|paid with|amount paid|total paid|grand total|amount due|att betala|betalt|kort)\b/i;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function isValidDocumentNumber(value) {
+  if (!value) return false;
+
+  const v = String(value).trim();
+
+  // Too short
+  if (v.length < 4) return false;
+
+  // Reject obvious English words
+  if (/^[A-Za-z]+$/i.test(v)) return false;
+
+  // Must contain at least one digit
+  if (!/\d/.test(v)) return false;
+
+  // Reject common OCR garbage
+  const rejected = new Set([
+    'money',
+    'order',
+    'slip',
+    'invoice',
+    'receipt',
+    'number',
+    'num',
+    'oice',
+    'voice',
+    'total',
+    'amount',
+  ]);
+
+  if (rejected.has(v.toLowerCase())) return false;
+
+  return true;
+}
+
+function looksLikeDocumentNumber(value) {
+  if (!value) return false;
+
+  const text = value.trim();
+
+  // 04846-28711740
+  if (/^\d{3,8}-\d{4,20}$/.test(text)) {
+    return true;
+  }
+
+  // INV-12345, 0432, etc.
+  if (/^[A-Z0-9][A-Z0-9\-\/]{3,30}$/i.test(text)) {
+    return /\d/.test(text);
+  }
+
+  return false;
+}
 
 function makeField(value, status, sourceText = '', method = 'keyword', page = 1) {
   return { value, status, sourceText, method, page };
 }
+
 function missing() {
   return { value: null, status: 'missing', sourceText: '', method: 'none', page: null };
 }
 
 /** Parse a date string into ISO YYYY-MM-DD. Returns null if not parseable. */
-function parseDate(raw) {
+function parseDate(raw, countryCode = null) {
   if (!raw) return null;
+
   const s = String(raw).trim();
 
-  // YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
-  let m = s.match(/\b(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})\b/);
-  if (m) {
-    const d = new Date(+m[1], +m[2] - 1, +m[3]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
+  function formatLocalDate(year, month, day) {
+    return (
+      `${String(year).padStart(4, '0')}-` +
+      `${String(month).padStart(2, '0')}-` +
+      `${String(day).padStart(2, '0')}`
+    );
   }
 
-  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-  m = s.match(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b/);
-  if (m) {
-    const d = new Date(+m[3], +m[2] - 1, +m[1]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
+  function isValidDate(year, month, day) {
+    const d = new Date(year, month - 1, day);
+
+    return (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    );
   }
 
-  // DD/MM/YY
-  m = s.match(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})\b/);
+  const country = String(countryCode || '').toUpperCase();
+
+  // ============================================================
+  // ISO: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  // ============================================================
+
+  let m = s.match(
+    /\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/
+  );
+
   if (m) {
-    const year = +m[3] < 70 ? 2000 + +m[3] : 1900 + +m[3];
-    const d = new Date(year, +m[2] - 1, +m[1]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+
+    if (isValidDate(year, month, day)) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
   }
 
-  // Natural: "15 Jan 2026", "Jan 15, 2026", etc.
-  const parsed = new Date(s);
-  if (!isNaN(parsed) && s.length > 4) return parsed.toISOString().split('T')[0];
+  // ============================================================
+  // Compact ISO: YYYYMMDD
+  //
+  // 20260528 → 2026-05-28
+  // ============================================================
+
+  m = s.match(
+    /\b(\d{4})(\d{2})(\d{2})\b/
+  );
+
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+
+    if (isValidDate(year, month, day)) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // Numeric dates
+  //
+  // US → MM/DD/YYYY
+  // Most European countries → DD/MM/YYYY
+  // Germany → DD.MM.YYYY
+  // ============================================================
+
+  m = s.match(
+    /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/
+  );
+
+  if (m) {
+    const first = Number(m[1]);
+    const second = Number(m[2]);
+    const year = Number(m[3]);
+
+    let day;
+    let month;
+
+    // US uses MM/DD/YYYY
+    if (country === 'US') {
+      month = first;
+      day = second;
+    }
+
+    // Most European / Israeli formats use DD/MM/YYYY
+    else {
+      day = first;
+      month = second;
+    }
+
+    if (isValidDate(year, month, day)) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // DD/MM/YY or MM/DD/YY
+  // ============================================================
+
+  m = s.match(
+    /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})\b/
+  );
+
+  if (m) {
+    const first = Number(m[1]);
+    const second = Number(m[2]);
+    const shortYear = Number(m[3]);
+
+    const year =
+      shortYear < 70
+        ? 2000 + shortYear
+        : 1900 + shortYear;
+
+    let day;
+    let month;
+
+    if (country === 'US') {
+      month = first;
+      day = second;
+    } else {
+      day = first;
+      month = second;
+    }
+
+    if (isValidDate(year, month, day)) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // Month name
+  //
+  // April 15, 2026
+  // Apr 15, 2026
+  // ============================================================
+
+  m = s.match(
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,\s*|\s+)(\d{4})\b/i
+  );
+
+  if (m) {
+    const months = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
+    };
+
+    const month = months[m[1].toLowerCase()];
+    const day = Number(m[2]);
+    const year = Number(m[3]);
+
+    if (
+      month !== undefined &&
+      isValidDate(year, month, day)
+    ) {
+      return formatLocalDate(year, month, day);
+    }
+
+    return null;
+  }
+
+  // ============================================================
+  // DD Month YYYY
+  //
+  // 15 April 2026
+  // 15 Apr 2026
+  // ============================================================
+
+  m = s.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{4})\b/i
+  );
+
+  if (m) {
+    const months = {
+      jan: 1,
+      january: 1,
+      feb: 2,
+      february: 2,
+      mar: 3,
+      march: 3,
+      apr: 4,
+      april: 4,
+      may: 5,
+      jun: 6,
+      june: 6,
+      jul: 7,
+      july: 7,
+      aug: 8,
+      august: 8,
+      sep: 9,
+      sept: 9,
+      september: 9,
+      oct: 10,
+      october: 10,
+      nov: 11,
+      november: 11,
+      dec: 12,
+      december: 12,
+    };
+
+    const day = Number(m[1]);
+    const month = months[m[2].toLowerCase()];
+    const year = Number(m[3]);
+
+    if (
+      month !== undefined &&
+      isValidDate(year, month, day)
+    ) {
+      return formatLocalDate(year, month, day);
+    }
+  }
 
   return null;
 }
 
 /** Find first ISO date in a string fragment. */
-function extractDateFromFragment(frag) {
+function extractDateFromFragment(frag, countryCode = null) {
+  if (!frag) return null;
+
+  const text = String(frag).trim();
+  const lower = text.toLowerCase();
+
   const candidates = [
-    ...frag.matchAll(/\b(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})\b/g),
-    ...frag.matchAll(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b/g),
-    ...frag.matchAll(/\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})\b/g),
+    // YYYYMMDD
+    ...text.matchAll(
+      /\b\d{8}\b/g
+    ),
+
+    // YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+    ...text.matchAll(
+      /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b/g
+    ),
+
+    // DD/MM/YYYY / DD-MM-YYYY / DD.MM.YYYY
+    ...text.matchAll(
+      /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b/g
+    ),
+
+    // DD/MM/YY
+    ...text.matchAll(
+      /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2}\b/g
+    ),
+
+    // October 27, 2023 / Oct 27, 2023
+    ...lower.matchAll(
+      /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*|\s+)\d{4}\b/g
+    ),
+
+    // 27 October 2023 / 27 Oct 2023
+    ...lower.matchAll(
+      /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)[,\s]+\d{4}\b/g
+    ),
   ];
-  for (const m of candidates) {
-    const d = parseDate(m[0]);
-    if (d) return d;
+
+  for (const match of candidates) {
+    const date = parseDate(match[0], countryCode);
+
+    if (date) {
+      return date;
+    }
   }
-  return null;
+
+  // Last attempt: let parseDate inspect the entire fragment.
+  return parseDate(text, countryCode);
 }
 
 /** Parse a monetary amount string to a positive float or null. */
 function parseAmount(raw) {
-  if (!raw) return null;
-  let s = String(raw).replace(/[₪$€£¥\s]/g, '');
-  // European format: 1.234,56 → 1234.56
-  if (/^\d{1,3}(\.\d{3})+,\d{2}$/.test(s)) {
-    s = s.replace(/\./g, '').replace(',', '.');
-  } else {
-    s = s.replace(/,(\d{3})/g, '$1').replace(',', '.');
+  if (raw == null) return null;
+
+  let s = String(raw)
+    .trim()
+    .replace(/[^\d,.\-]/g, '');
+
+  if (!s) return null;
+
+  // Both comma and dot:
+  // 1.234,56 -> 1234.56
+  // 1,234.56 -> 1234.56
+  if (s.includes(',') && s.includes('.')) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) {
+      // European format
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      // US format
+      s = s.replace(/,/g, '');
+    }
   }
-  const v = parseFloat(s);
-  return isNaN(v) ? null : Math.abs(v);
+
+  // Only comma:
+  // 275,65 -> 275.65
+  // 1,275 -> 1275
+  else if (s.includes(',')) {
+    const parts = s.split(',');
+
+    if (
+      parts.length === 2 &&
+      parts[1].length === 2
+    ) {
+      s = s.replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+  }
+
+  const value = Number(s);
+
+  return Number.isFinite(value) ? value : null;
 }
 
 /** Find amounts (>0) in a line; returns the last match (totals are usually rightmost). */
 function findAmountInLine(line) {
+  if (!line) return null;
+
   const patterns = [
-    /[\d]{1,3}(?:[,. ]?\d{3})*[,.]\d{2}/g,
-    /[\d]+[,.]\d{2}/g,
+    // 1,234.56 / 1.234,56 / 1234.56 / 1234,56
+    /\d{1,3}(?:[,. ]\d{3})*[,.]\d{2}/g,
+
+    // Simple decimal
+    /\d+[,.]\d{2}/g,
   ];
+
   let best = null;
-  for (const p of patterns) {
-    const matches = [...line.matchAll(p)];
-    if (matches.length > 0) {
-      const raw = matches[matches.length - 1][0];
-      const v = parseAmount(raw);
-      if (v !== null && v > 0) best = { value: v, raw };
+
+  for (const pattern of patterns) {
+    const matches = [...String(line).matchAll(pattern)];
+
+    if (matches.length === 0) {
+      continue;
     }
-    if (best) break;
+
+    // Totals are commonly the rightmost amount on the line.
+    const raw = matches[matches.length - 1][0];
+    const value = parseAmount(raw);
+
+    if (value !== null && value > 0) {
+      best = {
+        value,
+        raw,
+      };
+
+      break;
+    }
   }
+
   return best;
 }
 
-function detectCurrency(text) {
-  for (const { code, patterns } of CURRENCY_DETECTORS) {
-    if (patterns.some((p) => p.test(text))) return code;
+async function detectCurrency(text) {
+  if (!text) return null;
+
+  const normalizedText = String(text);
+
+  // ============================================================
+  // 1. Check localStorage reference data first
+  // ============================================================
+
+  const localMatch =
+    findReferenceInText(normalizedText);
+
+  if (
+    localMatch &&
+    localMatch.type === 'currency' &&
+    localMatch.value?.currencyCode
+  ) {
+    return localMatch.value.currencyCode.toUpperCase();
   }
+
+  // ============================================================
+  // 2. Look for an explicit 3-letter currency code
+  //
+  // This works for ALL currencies, not just EUR/USD/SEK/etc.
+  //
+  // Examples:
+  // CAD
+  // JPY
+  // AUD
+  // CHF
+  // NOK
+  // DKK
+  // PLN
+  // INR
+  // etc.
+  // ============================================================
+
+  const currencyCodeMatch =
+    normalizedText.match(
+      /\b[A-Z]{3}\b/gi
+    );
+
+  if (currencyCodeMatch) {
+
+    for (const possibleCode of currencyCodeMatch) {
+
+      const code =
+        possibleCode.toUpperCase();
+
+      try {
+
+        const currencies =
+          await getOrFetchCurrency(code);
+
+        if (
+          Array.isArray(currencies) &&
+          currencies.length > 0
+        ) {
+          return code;
+        }
+
+      } catch (error) {
+
+        console.warn(
+          '[OCR] Currency lookup failed:',
+          code,
+          error
+        );
+
+      }
+    }
+  }
+
+  // ============================================================
+  // 3. Check reference data again
+  //
+  // The previous API lookup may have added new currency
+  // information to localStorage.
+  // ============================================================
+
+  const apiMatch =
+    findReferenceInText(normalizedText);
+
+  if (
+    apiMatch &&
+    apiMatch.type === 'currency' &&
+    apiMatch.value?.currencyCode
+  ) {
+    return apiMatch.value.currencyCode.toUpperCase();
+  }
+
+  // ============================================================
+  // 4. No currency found
+  // ============================================================
+
   return null;
 }
 
@@ -185,126 +1024,673 @@ function detectCurrency(text) {
  * @param {{ pageNum:number, text:string, items:object[] }[]} pages
  * @returns {{ fields: object, validationIssues: object[] }}
  */
-export function parseReceipt(fullText, pages = []) {
-  const lines = fullText.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
+export async function parseReceipt(fullText, language, pages = []) {
+  const lines = fullText
+    .split(/[\n\r]+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
   const fields = {};
 
-  // ── Document type ──────────────────────────────────────────────────────────
+  // Normalize language.
+  // OCR may return something slightly different depending on the OCR library.
+  let normalizedLanguage =
+    language
+      ? String(language).toLowerCase()
+      : null;
+
+  // Common OCR language codes
+  const languageAliases = {
+    eng: 'eng',
+    en: 'eng',
+
+    swe: 'swe',
+    sv: 'swe',
+    'swe+eng': 'swe',
+
+    heb: 'heb',
+    he: 'heb',
+
+    deu: 'deu',
+    de: 'deu',
+
+    fra: 'fra',
+    fr: 'fra',
+
+    spa: 'spa',
+    es: 'spa',
+  };
+
+  normalizedLanguage =
+    languageAliases[normalizedLanguage] ??
+    normalizedLanguage ??
+    'eng';
+
+  let countryCode = null;
+  let referenceCountry = null;
+  // ============================================================
+  // LANGUAGE PATTERNS
+  //
+  // Use the patterns we already have.
+  // Reference-data API is used for identifying countries,
+  // currencies and languages, not for replacing these regex
+  // patterns.
+  // ============================================================
+
+  let languagePatterns =
+    LANGUAGE_PATTERNS[normalizedLanguage] ??
+    LANGUAGE_PATTERNS.eng;
+
+  let grossPatterns =
+    languagePatterns.gross;
+
+  let netPatterns =
+    languagePatterns.net;
+
+  let vatAmountPatterns =
+    languagePatterns.vatAmount;
+
+  let vatRatePatterns =
+    languagePatterns.vatRate;
+
+  // ============================================================================
+  // Document type
+  // ============================================================================
+
   let docType = null;
   let docTypeLine = '';
+
   for (const [type, pattern] of Object.entries(DOCUMENT_TYPE_PATTERNS)) {
     const line = lines.find((l) => pattern.test(l));
-    if (line) { docType = type; docTypeLine = line; break; }
+
+    if (line) {
+      docType = type;
+      docTypeLine = line;
+      break;
+    }
   }
+
   fields.documentType = docType
     ? makeField(docType, 'found', docTypeLine, 'keyword')
     : makeField('receipt', 'review', '', 'default');
 
-  // ── Vendor name ───────────────────────────────────────────────────────────
+  // ============================================================================
+  // Vendor name
+  // ============================================================================
+
   let vendorName = null;
   let vendorLine = '';
-  for (const line of lines.slice(0, 12)) {
-    if (line.length < 2) continue;
-    if (VENDOR_SKIP.test(line)) continue;
-    if (/^[\d\/\-\.\s]+$/.test(line)) continue;
-    if (/^[#*\-=_|>]+$/.test(line)) continue;
-    const amtHit = findAmountInLine(line);
-    if (amtHit && line.length < 25) continue;
-    vendorName = line;
-    vendorLine = line;
-    break;
-  }
-  fields.vendorName = vendorName
-    ? makeField(vendorName, 'review', vendorLine, 'first_meaningful_line')
-    : missing();
 
-  // ── Document number ───────────────────────────────────────────────────────
-  let docNumber = null;
-  let docNumberLine = '';
-  outer: for (const pattern of INVOICE_NUMBER_PATTERNS) {
-    for (const line of lines) {
-      const m = line.match(pattern);
-      if (m && m[1]) { docNumber = m[1]; docNumberLine = line; break outer; }
-    }
-  }
-  fields.documentNumber = docNumber
-    ? makeField(docNumber, 'found', docNumberLine, 'pattern')
-    : missing();
+  // ============================================================================
+  // 1. Explicit "Sold by" — highest priority
+  // ============================================================================
 
-  // ── Document date ─────────────────────────────────────────────────────────
-  let docDate = null;
-  let docDateLine = '';
-  outer2: for (const pattern of DATE_LABEL_PATTERNS) {
-    for (const line of lines) {
-      const m = line.match(pattern);
-      if (m) {
-        const d = extractDateFromFragment(m[1] ?? m[0]);
-        if (d) { docDate = d; docDateLine = line; break outer2; }
+  for (const line of lines) {
+    const cleaned = line
+      .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+      .trim();
+
+    const soldByMatch = cleaned.match(
+      /^sold\s+by\s*[:\-]?\s*(.+?)\s*$/i
+    );
+
+    if (soldByMatch) {
+      const candidate = soldByMatch[1].trim();
+
+      if (candidate.length >= 2) {
+        vendorName = candidate;
+        vendorLine = cleaned;
+
+        console.log('[VENDOR] Found from Sold by:', {
+          value: vendorName,
+          line: cleaned
+        });
+
+        break;
       }
     }
   }
-  if (!docDate) {
-    for (const line of lines.slice(0, 20)) {
-      const d = extractDateFromFragment(line);
-      if (d) { docDate = d; docDateLine = line; break; }
+
+  // ============================================================================
+  // 2. Explicit company name before Billing ID / Invoice ID
+  // ============================================================================
+
+  if (!vendorName) {
+    for (const line of lines.slice(0, 15)) {
+      const cleaned = line
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      const companyMatch = cleaned.match(
+        /^(.+?)\s+(?:billing\s+id|invoice\s+id|customer\s+id)\b/i
+      );
+
+      if (companyMatch) {
+        const candidate = companyMatch[1].trim();
+
+        if (candidate.length >= 3) {
+          vendorName = candidate;
+          vendorLine = cleaned;
+
+          console.log('[VENDOR] Found before ID:', {
+            value: vendorName,
+            line: cleaned
+          });
+
+          break;
+        }
+      }
     }
   }
+
+  // ============================================================================
+  // 3. Account Name → vendor is the next line
+  // ============================================================================
+  console.log('[VENDOR DEBUG] First 15 lines:', lines.slice(0, 15));
+
+  if (!vendorName) {
+    for (let i = 0; i < Math.min(lines.length, 15); i++) {
+      const cleaned = lines[i]
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      console.log('[VENDOR DEBUG] Checking:', JSON.stringify(cleaned));
+      if (!/^account\s+name\s*:/i.test(cleaned)) {
+        continue;
+      }
+
+      const nextLine = lines[i + 1]
+        ?.replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      if (!nextLine || nextLine.length < 2) {
+        continue;
+      }
+
+      // Prefer an all-caps company name.
+      if (
+        /[A-Z]/.test(nextLine) &&
+        !VENDOR_SKIP.test(nextLine) &&
+        !/^[\d\s.,:/\\-]+$/.test(nextLine)
+      ) {
+        vendorName = nextLine;
+        vendorLine = nextLine;
+
+        console.log('[VENDOR] Found after Account Name:', {
+          value: vendorName,
+          line: nextLine
+        });
+
+        break;
+      }
+    }
+  }
+
+  // ============================================================================
+  // 4. Email address / OCR email → use as vendor identifier
+  // ============================================================================
+
+  if (!vendorName) {
+    for (const line of lines.slice(0, 15)) {
+      const cleaned = line
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      // Normal email
+      const emailMatch = cleaned.match(
+        /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+      );
+
+      if (emailMatch) {
+        vendorName = emailMatch[0];
+        vendorLine = cleaned;
+
+        console.log('[VENDOR] Found email:', {
+          value: vendorName,
+          line: cleaned
+        });
+
+        break;
+      }
+
+      // ------------------------------------------------------------------------
+      // OCR email:
+      //
+      // josephboyssmith@yahoo.co.uk
+      //          ↓ OCR
+      // josephboyssmitheyahoo.co.uk
+      //
+      // Find an "e" followed by a domain-like string.
+      // ------------------------------------------------------------------------
+
+      const possibleEmail = cleaned.match(
+        /\b([A-Z0-9._%+-]+)e([A-Z0-9.-]+\.[A-Z]{2,})\b/i
+      );
+
+      if (possibleEmail) {
+        const username = possibleEmail[1];
+        const domain = possibleEmail[2];
+
+        // Make sure both sides are meaningful.
+        if (
+          username.length >= 2 &&
+          domain.length >= 4 &&
+          /\.[A-Z]{2,}$/i.test(domain)
+        ) {
+          const correctedEmail =
+            `${username}@${domain}`;
+
+          vendorName = correctedEmail;
+          vendorLine = cleaned;
+
+          console.log('[VENDOR] Found OCR email:', {
+            original: cleaned,
+            corrected: correctedEmail
+          });
+
+          break;
+        }
+      }
+    }
+  }
+  // ============================================================================
+  // Organization / department name
+  // ============================================================================
+
+  if (!vendorName) {
+    for (const line of lines.slice(0, 20)) {
+      const cleaned = line
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      if (!cleaned) continue;
+
+      // Looks like an organization or department name.
+      if (
+        /\b(?:department|management|financial|finance|ministry|authority|agency|administration|university|municipality|council|government|company|limited|ltd|inc|corp|corporation)\b/i.test(cleaned)
+      ) {
+        vendorName = cleaned;
+        vendorLine = cleaned;
+
+        console.log('[VENDOR] Organization name found:', {
+          value: vendorName,
+          line: cleaned
+        });
+
+        break;
+      }
+    }
+  }
+
+  // ============================================================================
+  // 5. Only if no explicit vendor was found: normal fallback
+  // ============================================================================
+
+  if (!vendorName) {
+    for (const line of lines.slice(0, 15)) {
+
+      const cleaned = line
+        .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
+        .trim();
+
+      if (cleaned.length < 2) continue;
+
+      if (VENDOR_SKIP.test(cleaned)) continue;
+
+      if (
+        normalizedLanguage !== 'heb' &&
+        /[\u0590-\u05FF]/.test(cleaned)
+      ) {
+        continue;
+      }
+
+      if (/^[\d\/\-. \s]+$/.test(cleaned)) continue;
+
+      if (/^[#*\-=_|>]+$/.test(cleaned)) continue;
+
+      if (/^[A-Z]{1,3}\s*[-=_|]+$/i.test(cleaned)) continue;
+
+      if (/^#?\d{3,8}-\d{4,20}$/.test(cleaned)) continue;
+
+      const amtHit = findAmountInLine(cleaned);
+
+      if (amtHit && cleaned.length < 25) continue;
+
+      if (
+        /^(?:date|payment\s+date|amount|total|subtotal|tax|sales tax|vat|currency)\s*[:|]/i.test(cleaned)
+      ) {
+        continue;
+      }
+
+      vendorName = cleaned;
+      vendorLine = cleaned;
+
+      console.log('[VENDOR] Fallback:', {
+        value: vendorName,
+        line: cleaned
+      });
+
+      break;
+    }
+  }
+
+  fields.vendorName = vendorName
+    ? makeField(
+      vendorName,
+      'review',
+      vendorLine,
+      'vendor_detection'
+    )
+    : missing();
+  // ============================================================================
+  // Document number
+  // ============================================================================
+
+  let docNumber = null;
+  let docNumberLine = '';
+
+  outer: for (const pattern of INVOICE_NUMBER_PATTERNS) {
+    for (const line of lines) {
+      const m = line.match(pattern);
+
+      if (!m || !m[1]) continue;
+
+      const candidate = m[1].trim();
+
+      if (!isValidDocumentNumber(candidate)) {
+        continue;
+      }
+
+      docNumber = candidate;
+      docNumberLine = line;
+      break outer;
+    }
+  }
+
+  fields.documentNumber = docNumber
+    ? makeField(
+      docNumber,
+      'found',
+      docNumberLine,
+      'pattern'
+    )
+    : missing();
+
+  // ============================================================================
+  // Country reference
+  // ============================================================================
+
+  const referenceMatch = findReferenceInText(fullText);
+
+  if (
+    referenceMatch?.type === 'country' &&
+    referenceMatch.value?.countryCode
+  ) {
+    countryCode = referenceMatch.value.countryCode;
+    referenceCountry = referenceMatch.value;
+  }
+
+  console.log('[REFERENCE] Country:', countryCode);
+
+  // ============================================================================
+  // Document date
+  // ============================================================================
+
+  let docDate = null;
+  let docDateLine = '';
+
+  outer2: for (const pattern of DATE_LABEL_PATTERNS) {
+    for (const line of lines) {
+      const m = line.match(pattern);
+
+      if (m) {
+        const d = extractDateFromFragment(m[1] ?? m[0], countryCode);
+
+        if (d) {
+          docDate = d;
+          docDateLine = line;
+          break outer2;
+        }
+      }
+    }
+  }
+
+  if (!docDate) {
+    for (const line of lines.slice(0, 20)) {
+      const d = extractDateFromFragment(line, countryCode);
+
+      if (d) {
+        docDate = d;
+        docDateLine = line;
+        break;
+      }
+    }
+  }
+
   fields.documentDate = docDate
     ? makeField(docDate, 'found', docDateLine, 'pattern')
     : missing();
 
-  // ── Due date ──────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Due date
+  // ============================================================================
+
   let dueDate = null;
   let dueDateLine = '';
+
   outer3: for (const pattern of DUE_DATE_LABEL_PATTERNS) {
     for (const line of lines) {
       const m = line.match(pattern);
+
       if (m) {
-        const d = extractDateFromFragment(m[1] ?? m[0]);
-        if (d && d !== docDate) { dueDate = d; dueDateLine = line; break outer3; }
+        const d = extractDateFromFragment(m[1] ?? m[0], countryCode);
+
+        if (d && d !== docDate) {
+          dueDate = d;
+          dueDateLine = line;
+          break outer3;
+        }
       }
     }
   }
+
   fields.dueDate = dueDate
     ? makeField(dueDate, 'found', dueDateLine, 'pattern')
     : missing();
 
-  // ── Currency ──────────────────────────────────────────────────────────────
-  const currency = detectCurrency(fullText);
-  fields.currency = currency
-    ? makeField(currency, 'found', '', 'symbol')
-    : makeField('ILS', 'review', '', 'default');
+  // ============================================================================
+  // VAT rate
+  // ============================================================================
 
-  // ── VAT rate (explicit on receipt) ────────────────────────────────────────
   let vatRate = null;
   let vatRateLine = '';
   let vatRateMethod = 'pattern';
-  outer4: for (const pattern of VAT_RATE_PATTERNS) {
+
+  // --------------------------------------------------------------------------
+  // 1. Try language-specific VAT rate patterns
+  // --------------------------------------------------------------------------
+
+  outer4: for (const pattern of vatRatePatterns) {
     for (const line of lines) {
       const m = line.match(pattern);
+
       if (m) {
-        const r = parseFloat(m[1]);
+        const r = parseFloat(
+          String(m[1]).replace(',', '.')
+        );
+
         if (!isNaN(r) && r >= 0 && r <= 100) {
           vatRate = r;
           vatRateLine = line;
+          vatRateMethod = 'pattern';
           break outer4;
         }
       }
     }
   }
 
-  // ── Country detection ─────────────────────────────────────────────────────
-  const countryDetected = detectCountry(fullText);
+  // --------------------------------------------------------------------------
+  // 2. VAT table fallback
+  //
+  // Example OCR:
+  //   | 12% 318.00 283.93 34.07
+  //
+  // Format:
+  //   VAT rate | Gross | Net | VAT
+  // --------------------------------------------------------------------------
+
+  if (vatRate === null) {
+    for (const line of lines) {
+      const m = line.match(
+        /(?:^|\s)(\d{1,2}(?:[.,]\d+)?)%\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*$/
+      );
+
+      if (!m) continue;
+
+      const r = parseFloat(
+        String(m[1]).replace(',', '.')
+      );
+
+      if (!isNaN(r) && r >= 0 && r <= 100) {
+        vatRate = r;
+        vatRateLine = line;
+        vatRateMethod = 'vat_table';
+        break;
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. Final VAT rate field
+  // --------------------------------------------------------------------------
+
+  fields.vatRate =
+    vatRate !== null
+      ? makeField(
+        vatRate,
+        vatRateMethod === 'country_default'
+          ? 'review'
+          : 'found',
+        vatRateLine,
+        vatRateMethod
+      )
+      : missing();
+
+  // ============================================================================
+  // Country detection
+  // ============================================================================
+
+  let countryDetected = detectCountry(fullText);
+
+  const isPlaceholder = (value) => {
+    if (!value) return true;
+
+    const normalized = String(value)
+      .trim()
+      .toLowerCase();
+
+    return [
+      'address',
+      '[address]',
+      '(address)',
+      'city',
+      '[city]',
+      '(city)',
+      'street',
+      '[street]',
+      '(street)',
+      'name',
+      '[name]',
+      '(name)',
+      'company',
+      '[company]',
+      '(company)',
+    ].includes(normalized);
+  };
+
+  // Try city geocoding if country was not detected.
+  if (!countryDetected) {
+    const city = extractCity(fullText);
+
+    if (city && !isPlaceholder(city)) {
+      const geoResult = await geocode(city);
+
+      if (geoResult?.countryCode) {
+        countryDetected = {
+          code: geoResult.countryCode,
+          name: geoResult.country,
+          confidence: 'low',
+          reason: `Country determined from city "${city}"`,
+          method: 'city_geocoding',
+        };
+      }
+    }
+  }
+
+  // Try address geocoding if country was still not detected.
+  if (!countryDetected) {
+    const address = extractAddress(fullText);
+
+    if (address && !isPlaceholder(address)) {
+      const geoResult = await geocode(address);
+
+      if (geoResult?.countryCode) {
+        countryDetected = {
+          code: geoResult.countryCode,
+          name: geoResult.country,
+          confidence: 'low',
+          reason: `Country determined from address "${address}"`,
+          method: 'address_geocoding',
+        };
+      }
+    }
+  }
+
+  // ============================================================================
+  // Save country + VAT fallback
+  // ============================================================================
+
   if (countryDetected) {
     fields.country = {
       value: countryDetected.code,
       countryName: countryDetected.name,
       confidence: countryDetected.confidence,
-      status: countryDetected.confidence === 'low' ? 'review' : 'found',
+
+      status:
+        countryDetected.confidence === 'low'
+          ? 'review'
+          : 'found',
+
       sourceText: countryDetected.reason,
-      method: 'country_detection',
+      method: countryDetected.method ?? 'country_detection',
       page: null,
     };
+
+    // Only use country's VAT rate when:
+    // 1. No explicit VAT rate was found.
+    // 2. Country confidence is high or medium.
+    if (
+      vatRate === null &&
+      ['high', 'medium'].includes(countryDetected.confidence)
+    ) {
+      const countryVat = getCountryVatRate(
+        countryDetected.code
+      );
+
+      if (countryVat !== null) {
+        vatRate = countryVat;
+        vatRateLine =
+          `Standard rate for ${countryDetected.name}: ${countryVat}%`;
+        vatRateMethod = 'country_default';
+
+        fields.vatRate = makeField(
+          vatRate,
+          'review',
+          vatRateLine,
+          vatRateMethod
+        );
+      }
+    }
   } else {
     fields.country = {
       value: null,
@@ -317,155 +1703,522 @@ export function parseReceipt(fullText, pages = []) {
     };
   }
 
-  // ── VAT rate fallback: use country standard rate ───────────────────────────
-  // Only when:
-  //   1. No explicit VAT rate found on the receipt
-  //   2. Country detected with medium or high confidence
-  // Explicit receipt VAT always wins over country default.
-  if (vatRate === null && countryDetected &&
-      (countryDetected.confidence === 'high' || countryDetected.confidence === 'medium')) {
-    const countryVat = getCountryVatRate(countryDetected.code);
-    if (countryVat !== null) {
-      vatRate = countryVat;
-      vatRateLine = `Standard rate for ${countryDetected.name}: ${countryVat}%`;
-      vatRateMethod = 'country_default';
-    }
+  // ============================================================================
+  // Currency
+  // ============================================================================
+
+  const currency = await detectCurrency(fullText);
+
+  if (currency) {
+    fields.currency = makeField(
+      currency,
+      'found',
+      '',
+      'detector'
+    );
+  } else if (
+    language === 'swe' ||
+    fields.country?.value === 'SE'
+  ) {
+    fields.currency = makeField(
+      'SEK',
+      'review',
+      'Currency inferred from Swedish document',
+      'country'
+    );
+  } else {
+    fields.currency = makeField(
+      'ILS',
+      'review',
+      '',
+      'default'
+    );
   }
 
-  fields.vatRate = vatRate !== null
-    ? makeField(vatRate, vatRateMethod === 'country_default' ? 'review' : 'found', vatRateLine, vatRateMethod)
-    : missing();
+  // ============================================================================
+  // Re-select financial patterns after country/currency detection
+  // ============================================================================
 
-  // ── Gross amount ──────────────────────────────────────────────────────────
+  let financialLanguage = normalizedLanguage;
+
+  if (
+    fields.country?.value === 'SE' ||
+    currency === 'SEK'
+  ) {
+    financialLanguage = 'swe';
+  } else if (
+    fields.country?.value === 'IL' ||
+    currency === 'ILS'
+  ) {
+    financialLanguage = 'heb';
+  }
+
+  const detectedLanguagePatterns =
+    LANGUAGE_PATTERNS[financialLanguage] ||
+    LANGUAGE_PATTERNS.eng;
+
+  // Replace the initial language-based patterns with the
+  // country/currency-aware patterns for monetary extraction.
+  grossPatterns = detectedLanguagePatterns.gross;
+  netPatterns = detectedLanguagePatterns.net;
+  vatAmountPatterns = detectedLanguagePatterns.vatAmount;
+
+  // VAT rate is NOT replaced here because it was already checked above.
+  // If you want Swedish country-based VAT patterns too, handle those
+  // separately before the VAT fallback.
+
+  console.log('[FINANCIAL PATTERNS]', {
+    normalizedLanguage,
+    country: fields.country?.value,
+    detectedCurrency: currency,
+    financialLanguage,
+    grossPatterns: grossPatterns.map(p => p.toString()),
+    netPatterns: netPatterns.map(p => p.toString()),
+    vatAmountPatterns: vatAmountPatterns.map(p => p.toString())
+  });
+
+  /// ============================================================================
+  // Gross amount
+  // ============================================================================
+
   let grossAmount = null;
   let grossAmountLine = '';
-  outer5: for (const pattern of GROSS_LABEL_PATTERNS) {
-    for (const line of lines) {
-      const m = line.match(pattern);
-      if (m) {
-        const v = parseAmount(m[1]);
-        if (v !== null && v > 0) { grossAmount = v; grossAmountLine = line; break outer5; }
-      }
-    }
-  }
-  if (grossAmount === null) {
-    for (const line of lines) {
-      if (/\btotal\b|סה"כ|amount\s+due/i.test(line)) {
-        const hit = findAmountInLine(line);
-        if (hit) { grossAmount = hit.value; grossAmountLine = line; break; }
-      }
-    }
-  }
-  fields.grossAmount = grossAmount !== null
-    ? makeField(grossAmount, 'found', grossAmountLine, 'keyword')
-    : missing();
 
-  // ── Net amount ────────────────────────────────────────────────────────────
+  // 1. Normal gross patterns
+  outer5: for (const pattern of grossPatterns) {
+    for (const line of lines) {
+      // console.log('[GROSS CHECK]', {
+      //   line,
+      //   pattern: pattern.toString()
+      // });
+
+      const m = line.match(pattern);
+
+      if (!m || !m[1]) continue;
+
+      const v = parseAmount(m[1]);
+
+      if (v !== null && v > 0) {
+        grossAmount = v;
+        grossAmountLine = line;
+        break outer5;
+      }
+    }
+  }
+
+  // ============================================================================
+  // Currency directly followed by amount
+  //
+  // Examples:
+  // EUR 100
+  // USD 50.00
+  // SEK 1836
+  // GBP 25,50
+  // ILS 100
+  // €100
+  // £100
+  // $100
+  // ₪100
+  // ============================================================================
+
+  if (grossAmount === null) {
+    const CURRENCY_AMOUNT_PATTERNS = [
+      // ‘Amount: EUR 850.00
+      /.*?(?:amount|total|grand\s+total|amount\s+due)\s*:\s*(?:EUR|USD|SEK|GBP|ILS|NIS)\s*([0-9][0-9.,\s]*)/i,
+
+      // Amount EUR 850.00 (without colon)
+      /.*?(?:amount|total|grand\s+total|amount\s+due)\s+(?:EUR|USD|SEK|GBP|ILS|NIS)\s*([0-9][0-9.,\s]*)/i,
+
+      // EUR 850.00
+      /\b(?:EUR|USD|SEK|GBP|ILS|NIS)\b\s*([0-9][0-9.,\s]*)/i,
+
+      // €850.00 / £850.00 / $850.00 / ₪850.00
+      /[€£$₪]\s*([0-9][0-9.,\s]*)/i,
+    ];
+
+    outerCurrencyAmount:
+    for (const pattern of CURRENCY_AMOUNT_PATTERNS) {
+      for (const line of lines) {
+        const m = line.match(pattern);
+
+        console.log('[GROSS CURRENCY CHECK]', {
+          line,
+          pattern: pattern.toString(),
+          match: m?.[0] ?? null,
+          amount: m?.[1] ?? null
+        });
+
+        if (!m || !m[1]) continue;
+
+        const v = parseAmount(m[1]);
+
+        if (v !== null && v > 0) {
+          grossAmount = v;
+          grossAmountLine = line;
+
+          console.log('[GROSS] Found currency + amount:', {
+            value: grossAmount,
+            line: grossAmountLine
+          });
+
+          break outerCurrencyAmount;
+        }
+      }
+    }
+  }
+
+  // 2. Your existing strongGrossPatterns fallback
+  if (grossAmount === null) {
+    // ... your existing strongGrossPatterns code ...
+  }
+
+  // 3. LAST RESORT: exactly one payment amount
+  if (grossAmount === null) {
+    const paymentAmounts = [];
+
+    const PAYMENT_KEYWORDS =
+      /\b(?:paid|payment|amount paid|total paid|grand total|amount due|att betala|betalt|kort)\b/i;
+
+    for (const line of lines) {
+      if (!PAYMENT_KEYWORDS.test(line)) continue;
+
+      const amounts = line.match(/\d+(?:[.,]\d{2})/g);
+
+      if (!amounts) continue;
+
+      for (const raw of amounts) {
+        const value = parseAmount(raw);
+
+        if (value !== null && value > 0) {
+          paymentAmounts.push({
+            value,
+            line,
+          });
+        }
+      }
+    }
+
+    // Only one payment amount found → use it as final total
+    if (paymentAmounts.length === 1) {
+      grossAmount = paymentAmounts[0].value;
+      grossAmountLine = paymentAmounts[0].line;
+    }
+  }
+
+  // 4. Create the field
+  fields.grossAmount =
+    grossAmount !== null
+      ? makeField(
+        grossAmount,
+        'found',
+        grossAmountLine,
+        'keyword'
+      )
+      : makeField(
+        null,
+        'found',
+        'Gross amount detected but value could not be read',
+        'unreadable_amount'
+      );
+
+  // ============================================================================
+  // Net amount
+  // ============================================================================
+
   let netAmount = null;
   let netAmountLine = '';
-  outer6: for (const pattern of NET_LABEL_PATTERNS) {
+
+  outer6: for (const pattern of netPatterns) {
     for (const line of lines) {
       const m = line.match(pattern);
-      if (m) {
-        const v = parseAmount(m[1]);
-        if (v !== null && v > 0) { netAmount = v; netAmountLine = line; break outer6; }
+
+      if (!m || !m[1]) continue;
+
+      const v = parseAmount(m[1]);
+
+      if (v !== null && v > 0) {
+        netAmount = v;
+        netAmountLine = line;
+        break outer6;
       }
     }
   }
-  fields.netAmount = netAmount !== null
-    ? makeField(netAmount, 'found', netAmountLine, 'keyword')
-    : missing();
 
-  // ── VAT amount ────────────────────────────────────────────────────────────
+  if (netAmount === null && normalizedLanguage === 'swe') {
+    for (const line of lines) {
+      const m = line.match(
+        /(\d+(?:[.,]\d+)?)\s*%\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/
+      );
+
+      if (!m) continue;
+
+      const total = parseAmount(m[2]);
+      const net = parseAmount(m[3]);
+      const vat = parseAmount(m[4]);
+
+      if (
+        total !== null &&
+        net !== null &&
+        vat !== null &&
+        Math.abs((net + vat) - total) < 0.1
+      ) {
+        netAmount = net;
+        netAmountLine = line;
+        break;
+      }
+    }
+  }
+
+  fields.netAmount =
+    netAmount !== null
+      ? makeField(
+        netAmount,
+        'found',
+        netAmountLine,
+        'keyword'
+      )
+      : missing();
+
+  // ============================================================================
+  // VAT amount
+  // ============================================================================
+
   let vatAmount = null;
   let vatAmountLine = '';
-  outer7: for (const pattern of VAT_AMOUNT_LABEL_PATTERNS) {
+
+  outer7: for (const pattern of vatAmountPatterns) {
     for (const line of lines) {
       const m = line.match(pattern);
-      if (m) {
-        const v = parseAmount(m[1]);
-        if (v !== null && v > 0) { vatAmount = v; vatAmountLine = line; break outer7; }
+
+      if (!m || !m[1]) continue;
+
+      const v = parseAmount(m[1]);
+
+      if (v !== null && v > 0) {
+        vatAmount = v;
+        vatAmountLine = line;
+        break outer7;
       }
     }
   }
-  fields.vatAmount = vatAmount !== null
-    ? makeField(vatAmount, 'found', vatAmountLine, 'keyword')
-    : missing();
 
-  // ── Arithmetic derivation ─────────────────────────────────────────────────
-  // Fill in one or two missing amounts if others are known.
+  fields.vatAmount =
+    vatAmount !== null
+      ? makeField(
+        vatAmount,
+        'found',
+        vatAmountLine,
+        'keyword'
+      )
+      : missing();
+
+  // ============================================================================
+  // Arithmetic derivation
+  // ============================================================================
 
   // 1. gross + vatAmount → net
-  if (grossAmount !== null && vatAmount !== null && netAmount === null) {
-    const derived = Math.round((grossAmount - vatAmount) * 100) / 100;
+  if (
+    grossAmount !== null &&
+    vatAmount !== null &&
+    netAmount === null
+  ) {
+    const derived =
+      Math.round((grossAmount - vatAmount) * 100) / 100;
+
     if (derived > 0) {
-      fields.netAmount = makeField(derived, 'review', 'derived: gross − vat', 'arithmetic');
+      fields.netAmount = makeField(
+        derived,
+        'review',
+        'derived: gross − vat',
+        'arithmetic'
+      );
+
       netAmount = derived;
     }
   }
+
   // 2. gross + net → vatAmount
-  if (grossAmount !== null && netAmount !== null && vatAmount === null) {
-    const derived = Math.round((grossAmount - netAmount) * 100) / 100;
+  if (
+    grossAmount !== null &&
+    netAmount !== null &&
+    vatAmount === null
+  ) {
+    const derived =
+      Math.round((grossAmount - netAmount) * 100) / 100;
+
     if (derived >= 0) {
-      fields.vatAmount = makeField(derived, 'review', 'derived: gross − net', 'arithmetic');
+      fields.vatAmount = makeField(
+        derived,
+        'review',
+        'derived: gross − net',
+        'arithmetic'
+      );
+
       vatAmount = derived;
     }
   }
+
   // 3. net + vatAmount → gross
-  if (netAmount !== null && vatAmount !== null && grossAmount === null) {
-    const derived = Math.round((netAmount + vatAmount) * 100) / 100;
-    fields.grossAmount = makeField(derived, 'review', 'derived: net + vat', 'arithmetic');
+  if (
+    netAmount !== null &&
+    vatAmount !== null &&
+    grossAmount === null
+  ) {
+    const derived =
+      Math.round((netAmount + vatAmount) * 100) / 100;
+
+    fields.grossAmount = makeField(
+      derived,
+      'review',
+      'derived: net + vat',
+      'arithmetic'
+    );
+
     grossAmount = derived;
   }
-  // 4. gross + vatRate (no explicit net or vatAmount) → derive both
-  //    net = gross / (1 + rate/100)   ← gross is already the total-paid amount
-  if (grossAmount !== null && vatRate !== null && netAmount === null && vatAmount === null) {
+
+  // 4. gross + vatRate → derive net + VAT
+  // 4. gross + vatRate → derive net + VAT
+  if (
+    grossAmount !== null &&
+    vatRate !== null &&
+    netAmount === null &&
+    vatAmount === null
+  ) {
     const rate = vatRate / 100;
-    const derivedNet = Math.round((grossAmount / (1 + rate)) * 100) / 100;
-    const derivedVat = Math.round((grossAmount - derivedNet) * 100) / 100;
+
+    const derivedNet =
+      Math.round(
+        (grossAmount / (1 + rate)) * 100
+      ) / 100;
+
+    const derivedVat =
+      Math.round(
+        (grossAmount - derivedNet) * 100
+      ) / 100;
+
     if (derivedNet > 0) {
-      fields.netAmount = makeField(derivedNet, 'review',
-        `derived: ${grossAmount} / (1 + ${vatRate}%)`, 'arithmetic');
-      fields.vatAmount = makeField(derivedVat, 'review',
-        `derived: ${grossAmount} − ${derivedNet}`, 'arithmetic');
+      fields.netAmount = makeField(
+        derivedNet,
+        'review',
+        `derived: ${grossAmount} / (1 + ${vatRate}%)`,
+        'arithmetic'
+      );
+
+      fields.vatAmount = makeField(
+        derivedVat,
+        'review',
+        `derived: ${grossAmount} − ${derivedNet}`,
+        'arithmetic'
+      );
+
       netAmount = derivedNet;
       vatAmount = derivedVat;
     }
   }
 
-  // ── Financial validation ──────────────────────────────────────────────────
-  const validationIssues = [];
-  const TOL = (v) => Math.max(0.05, Math.abs(v) * 0.005); // 0.5% or 5 cents
+  // ========================================================================
+  // Money detection check
+  // ========================================================================
 
-  // Validate: net + vatAmount ≈ gross
-  if (grossAmount !== null && netAmount !== null && vatAmount !== null) {
-    const sum = Math.round((netAmount + vatAmount) * 100) / 100;
+  const moneyNeedsReview =
+    grossAmount === null &&
+    netAmount === null &&
+    vatAmount === null;
+
+  if (moneyNeedsReview) {
+    console.warn(
+      '[Parser] No monetary amounts found — manual check required'
+    );
+  }
+
+  // ============================================================================
+  // Financial validation
+  // ============================================================================
+
+  const validationIssues = [];
+
+  const TOL = (v) =>
+    Math.max(0.05, Math.abs(v) * 0.005);
+
+  // Validate:
+  // net + VAT ≈ gross
+  if (
+    grossAmount !== null &&
+    netAmount !== null &&
+    vatAmount !== null
+  ) {
+    const sum =
+      Math.round((netAmount + vatAmount) * 100) / 100;
+
     const diff = Math.abs(sum - grossAmount);
+
     if (diff > TOL(grossAmount)) {
       validationIssues.push({
         field: 'amounts',
-        issue: `Net (${netAmount}) + VAT (${vatAmount}) = ${sum} ≠ Gross (${grossAmount}) — check these values`,
+        issue:
+          `Net (${netAmount}) + VAT (${vatAmount}) = ` +
+          `${sum} ≠ Gross (${grossAmount}) — check these values`,
       });
-      fields.netAmount = { ...fields.netAmount, status: 'invalid' };
-      fields.vatAmount = { ...fields.vatAmount, status: 'invalid' };
-      fields.grossAmount = { ...fields.grossAmount, status: 'invalid' };
+
+      fields.netAmount = {
+        ...fields.netAmount,
+        status: 'invalid',
+      };
+
+      fields.vatAmount = {
+        ...fields.vatAmount,
+        status: 'invalid',
+      };
+
+      fields.grossAmount = {
+        ...fields.grossAmount,
+        status: 'invalid',
+      };
     }
   }
 
-  // Validate: net × vatRate% ≈ vatAmount
-  if (netAmount !== null && vatRate !== null && vatAmount !== null) {
-    const expected = Math.round(netAmount * vatRate / 100 * 100) / 100;
+  // Validate:
+  // net × VAT rate ≈ VAT amount
+  if (
+    netAmount !== null &&
+    vatRate !== null &&
+    vatAmount !== null
+  ) {
+    const expected =
+      Math.round(
+        (netAmount * vatRate / 100) * 100
+      ) / 100;
+
     const diff = Math.abs(expected - vatAmount);
+
     if (diff > TOL(expected)) {
       validationIssues.push({
         field: 'vatRate',
-        issue: `Net × ${vatRate}% = ${expected} ≠ extracted VAT amount (${vatAmount}) — verify rate`,
+        issue:
+          `Net × ${vatRate}% = ${expected} ≠ ` +
+          `extracted VAT amount (${vatAmount}) — verify rate`,
       });
+
       if (fields.vatRate.status !== 'invalid') {
-        fields.vatRate = { ...fields.vatRate, status: 'review' };
+        fields.vatRate = {
+          ...fields.vatRate,
+          status: 'review',
+        };
       }
     }
   }
 
-  return { fields, validationIssues };
+  // ============================================================================
+  // Return
+  // ============================================================================
+
+  console.log('[FULL TEXT]', fullText);
+  console.log('[PAGES]', pages);
+
+  return {
+    fields,
+    validationIssues,
+    moneyNeedsReview
+  };
 }

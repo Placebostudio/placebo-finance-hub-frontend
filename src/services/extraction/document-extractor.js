@@ -17,6 +17,7 @@ import { extractPDF, renderPDFPages } from './pdf-extractor';
 import { ocrSource } from './image-ocr';
 import { parseReceipt } from './receipt-parser';
 import { parseStatement } from './statement-parser';
+import { detectCountry } from '@/config/vat-config';
 
 // ── Receipt / invoice ─────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ import { parseStatement } from './statement-parser';
  * @param {(p: {stage:string, detail:string, percent:number}) => void} onProgress
  * @returns {{ method, fullText, fields, validationIssues, extractedAt }}
  */
-export async function extractReceipt(file, onProgress = () => {}) {
+export async function extractReceipt(file, onProgress = () => { }) {
   const isImage = file.type.startsWith('image/');
   const isPDF = file.type === 'application/pdf';
 
@@ -47,6 +48,7 @@ export async function extractReceipt(file, onProgress = () => {}) {
   let fullText = '';
   let pages = [];
   let method = 'manual';
+  let language = null;
 
   if (isImage) {
     console.log('[extractReceipt] Image file — running OCR directly');
@@ -54,10 +56,17 @@ export async function extractReceipt(file, onProgress = () => {}) {
 
     try {
       console.log('[OCR] Started');
-      fullText = await ocrSource(file, (m) => {
+      const ocrResult = await ocrSource(file, (m) => {
         const pct = 15 + Math.round(m.progress * 65);
-        onProgress({ stage: 'ocr', detail: m.status, percent: pct });
+        onProgress({
+          stage: 'ocr',
+          detail: m.status,
+          percent: pct
+        });
       });
+
+      fullText = ocrResult.text;
+      language = ocrResult.language;
       console.log('[OCR] Completed — text length:', fullText.length);
       console.log('[extractReceipt] OCR complete', { textLength: fullText.length });
     } catch (ocrErr) {
@@ -121,13 +130,37 @@ export async function extractReceipt(file, onProgress = () => {}) {
         onProgress({ stage: 'ocr', detail: `OCR page ${i + 1} of ${canvases.length}`, percent: pct });
         try {
           console.log(`[OCR] Started — page ${i + 1}`);
-          const t = await ocrSource(canvases[i], (m) => {
-            onProgress({ stage: 'ocr', detail: m.status, percent: pct });
+          const ocrResult = await ocrSource(canvases[i], (m) => {
+            onProgress({
+              stage: 'ocr',
+              detail: m.status,
+              percent: pct
+            });
           });
-          console.log(`[OCR] Completed — page ${i + 1} text length: ${t.length}`);
-          console.log(`[extractReceipt] OCR page ${i + 1} — text length: ${t.length}`);
+
+          const t = ocrResult.text;
+
+          // Keep the first detected language.
+          // All pages should use the same document language.
+          if (!language && ocrResult.language) {
+            language = ocrResult.language;
+          }
+
+          console.log(
+            `[OCR] Completed — page ${i + 1} text length: ${t.length}`
+          );
+
+          console.log(
+            `[extractReceipt] OCR page ${i + 1} — text length: ${t.length}, language: ${ocrResult.language}`
+          );
+
           textParts.push(t);
-          pages.push({ pageNum: i + 1, text: t, items: [] });
+
+          pages.push({
+            pageNum: i + 1,
+            text: t,
+            items: []
+          });
         } catch (ocrPageErr) {
           console.error(`[extractReceipt] OCR failed on page ${i + 1}:`, ocrPageErr);
           textParts.push('');
@@ -144,13 +177,17 @@ export async function extractReceipt(file, onProgress = () => {}) {
   onProgress({ stage: 'parsing', detail: 'Parsing fields', percent: 90 });
   console.log('[extractReceipt] Parsing text into fields...');
 
-  let fields, validationIssues;
+  let fields, validationIssues, moneyNeedsReview;
   try {
-    ({ fields, validationIssues } = parseReceipt(fullText, pages));
+    ({ fields, validationIssues, moneyNeedsReview } = await parseReceipt(fullText, language, pages));
     const parsedSummary = Object.fromEntries(
       Object.entries(fields).map(([k, f]) => [k, { value: f.value, status: f.status }])
     );
     console.log('[Parser] Parsed fields:', parsedSummary);
+    console.log('[Parser] Money check:', {
+      moneyFound: !moneyNeedsReview,
+      moneyNeedsReview,
+    });
   } catch (parseErr) {
     console.error('[extractReceipt] Parser threw an error:', parseErr);
     throw parseErr;
@@ -187,7 +224,7 @@ export async function extractReceipt(file, onProgress = () => {}) {
  * @param {(p: {stage:string, detail:string, percent:number}) => void} onProgress
  * @returns {{ method, transactions, confidence, extractedText, issues }}
  */
-export async function extractStatement(file, onProgress = () => {}) {
+export async function extractStatement(file, onProgress = () => { }) {
   if (file.type !== 'application/pdf') {
     throw new Error('Statement extraction requires a PDF file');
   }
@@ -219,7 +256,7 @@ export async function extractStatement(file, onProgress = () => {}) {
     for (let i = 0; i < canvases.length; i++) {
       const pct = 70 + Math.round((i / canvases.length) * 15);
       onProgress({ stage: 'ocr', detail: `OCR page ${i + 1} of ${canvases.length}`, percent: pct });
-      const t = await ocrSource(canvases[i], () => {});
+      const t = await ocrSource(canvases[i], () => { });
       textParts.push(t);
       pagesForParsing.push({ pageNum: i + 1, text: t, items: [] });
     }
@@ -228,8 +265,19 @@ export async function extractStatement(file, onProgress = () => {}) {
     console.log('[extractStatement] OCR complete — text length:', textForParsing.length);
   }
 
-  onProgress({ stage: 'parsing', detail: 'Detecting transactions', percent: 88 });
-  const result = parseStatement(textForParsing, pagesForParsing);
+  const country = detectCountry(textForParsing);
+
+  onProgress({
+    stage: 'parsing',
+    detail: 'Detecting transactions',
+    percent: 88
+  });
+
+  const result = parseStatement(
+    textForParsing,
+    pagesForParsing,
+    country
+  );
 
   console.log('[extractStatement] Parsing complete', {
     transactions: result.transactions?.length ?? 0,

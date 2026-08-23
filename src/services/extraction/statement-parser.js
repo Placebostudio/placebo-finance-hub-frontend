@@ -42,6 +42,17 @@ function detectCurrency(text) {
   return 'ILS';
 }
 
+const COUNTRY_DEFAULT_CURRENCIES = {
+  SE: 'SEK',
+  IL: 'ILS',
+  US: 'USD',
+  GB: 'GBP',
+  DE: 'EUR',
+  FR: 'EUR',
+  IT: 'EUR',
+  ES: 'EUR',
+};
+
 // ── Noise lines ───────────────────────────────────────────────────────────────
 const SKIP_LINE = [
   /^page\s+\d+/i,
@@ -75,39 +86,76 @@ function isHeaderLine(line) {
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function parseDate(str) {
   const s = str.trim();
-  // YYYY-MM-DD
-  let m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
-  if (m) {
-    const d = new Date(+m[1], +m[2] - 1, +m[3]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
-  }
-  // DD/MM/YYYY
-  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
-  if (m) {
-    const d = new Date(+m[3], +m[2] - 1, +m[1]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
-  }
-  // DD/MM/YY
-  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
-  if (m) {
-    const year = +m[3] < 70 ? 2000 + +m[3] : 1900 + +m[3];
-    const d = new Date(year, +m[2] - 1, +m[1]);
-    if (!isNaN(d)) return d.toISOString().split('T')[0];
-  }
-  return null;
-}
 
-function extractDates(line) {
-  const found = [];
-  for (const re of DATE_RE) {
-    const cloned = new RegExp(re.source, re.flags);
-    let m;
-    while ((m = cloned.exec(line)) !== null) {
-      const parsed = parseDate(m[1]);
-      if (parsed && !found.includes(parsed)) found.push(parsed);
+  // YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  let m = s.match(
+    /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/
+  );
+
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+
+    const d = new Date(year, month - 1, day);
+
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
   }
-  return found;
+
+  // DD/MM/YYYY / DD-MM-YYYY / DD.MM.YYYY
+  m = s.match(
+    /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/
+  );
+
+  if (m) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    const year = Number(m[3]);
+
+    const d = new Date(year, month - 1, day);
+
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  // DD/MM/YY
+  m = s.match(
+    /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/
+  );
+
+  if (m) {
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+
+    const shortYear = Number(m[3]);
+    const year =
+      shortYear < 70
+        ? 2000 + shortYear
+        : 1900 + shortYear;
+
+    const d = new Date(year, month - 1, day);
+
+    if (
+      d.getFullYear() === year &&
+      d.getMonth() === month - 1 &&
+      d.getDate() === day
+    ) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  return null;
 }
 
 // ── Amount helpers ────────────────────────────────────────────────────────────
@@ -228,8 +276,9 @@ function parseTransactionLine(line, defaultCurrency) {
  * @param {{ pageNum:number, text:string, items:object[] }[]} pages
  * @returns {{ transactions, confidence, extractedText, issues }}
  */
-export function parseStatement(fullText, pages = []) {
-  const defaultCurrency = detectCurrency(fullText);
+export function parseStatement(fullText, pages = [], country = null) {
+  const defaultCurrency =
+  COUNTRY_DEFAULT_CURRENCIES[country] || 'ILS';
 
   // Build line list, preferring item-reconstructed lines for better table support
   let allLines = [];
