@@ -184,10 +184,10 @@ export async function extractReceipt(file, onProgress = () => { }) {
       Object.entries(fields).map(([k, f]) => [k, { value: f.value, status: f.status }])
     );
     console.log('[Parser] Parsed fields:', parsedSummary);
-    console.log('[Parser] Money check:', {
-      moneyFound: !moneyNeedsReview,
-      moneyNeedsReview,
-    });
+    // console.log('[Parser] Money check:', {
+    //   moneyFound: !moneyNeedsReview,
+    //   moneyNeedsReview,
+    // });
   } catch (parseErr) {
     console.error('[extractReceipt] Parser threw an error:', parseErr);
     throw parseErr;

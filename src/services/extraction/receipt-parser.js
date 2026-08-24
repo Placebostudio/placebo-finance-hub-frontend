@@ -1194,7 +1194,7 @@ export async function parseReceipt(fullText, language, pages = []) {
         .replace(/[\u200E\u200F\u202A-\u202E]/g, '')
         .trim();
 
-      console.log('[VENDOR DEBUG] Checking:', JSON.stringify(cleaned));
+      // console.log('[VENDOR DEBUG] Checking:', JSON.stringify(cleaned));
       if (!/^account\s+name\s*:/i.test(cleaned)) {
         continue;
       }
@@ -1365,10 +1365,10 @@ export async function parseReceipt(fullText, language, pages = []) {
       vendorName = cleaned;
       vendorLine = cleaned;
 
-      console.log('[VENDOR] Fallback:', {
-        value: vendorName,
-        line: cleaned
-      });
+      // console.log('[VENDOR] Fallback:', {
+      //   value: vendorName,
+      //   line: cleaned
+      // });
 
       break;
     }
@@ -2213,8 +2213,8 @@ export async function parseReceipt(fullText, language, pages = []) {
   // Return
   // ============================================================================
 
-  console.log('[FULL TEXT]', fullText);
-  console.log('[PAGES]', pages);
+  console.log('[FULL TEXT] \n', fullText);
+  // console.log('[PAGES]', pages);
 
   return {
     fields,
