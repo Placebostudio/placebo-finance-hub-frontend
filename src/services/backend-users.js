@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5173/api/users";
+const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5173"}/api/users`;
 
 const LOGGED_IN_USER_KEY = "logged_in_user";
 
@@ -93,13 +93,10 @@ export const userService = {
         // STORE LOGGED-IN USER
         // ========================================================
 
-        if (!localStorage.getItem(LOGGED_IN_USER_KEY)) {
-
-            localStorage.setItem(
-                LOGGED_IN_USER_KEY,
-                JSON.stringify(data.user)
-            );
-        }
+        localStorage.setItem(
+            LOGGED_IN_USER_KEY,
+            JSON.stringify(data.user)
+        );
 
 
         return data;
