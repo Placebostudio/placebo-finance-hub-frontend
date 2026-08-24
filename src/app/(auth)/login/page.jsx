@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthStore } from "@/store/auth";
+import { userRepository } from "../../../services/backend-users";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +18,17 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+
+    const currentUser =
+      userRepository.getLoggedInUser();
+
+    if (currentUser) {
+      router.replace("/dashboard");
+    }
+
+  }, [router]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

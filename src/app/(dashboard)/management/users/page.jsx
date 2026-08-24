@@ -11,13 +11,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/layout/page-header";
-import { userService } from "@/services/user.service";
+import { userRepository } from "@/services/backend-users";
 import { useOwnerGuard } from "@/hooks/use-owner-guard";
 import { getInitials } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ROLE_VARIANTS = { owner: "destructive", manager: "default", viewer: "secondary" };
-const ROLE_LABELS   = { owner: "Owner", manager: "Manager", viewer: "Viewer" };
+const ROLE_LABELS = { owner: "Owner", manager: "Manager", viewer: "Viewer" };
 
 function UserDialog({ open, user, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -40,22 +40,75 @@ function UserDialog({ open, user, onClose, onSaved }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSave = () => {
+  const handleSave = async () => {
+
     if (!form.fullName || !form.username) {
-      toast.error("Full name and username are required");
+
+      toast.error(
+        "Full name and username are required"
+      );
+
       return;
     }
+
+
     if (!user && !form.password) {
-      toast.error("Password is required for new users");
+
+      toast.error(
+        "Password is required for new users"
+      );
+
       return;
     }
-    const data = { ...form };
-    if (!data.password) delete data.password;
-    if (user) userService.update(user.id, data);
-    else userService.create(data);
-    toast.success(user ? "User updated" : "User created");
-    onSaved();
-    onClose();
+
+
+    try {
+
+      const data = {
+        ...form
+      };
+
+
+      // Don't send an empty password when editing
+      if (!data.password) {
+        delete data.password;
+      }
+
+
+      if (user) {
+
+        await userRepository.update(
+          user.id,
+          data
+        );
+
+      } else {
+
+        await userRepository.create(
+          data
+        );
+      }
+
+
+      toast.success(
+        user
+          ? "User updated"
+          : "User created"
+      );
+
+      onSaved();
+
+      onClose();
+
+    } catch (err) {
+
+      console.error(err);
+
+      toast.error(
+        err.message ||
+        "Failed to save user"
+      );
+    }
   };
 
   return (
@@ -116,8 +169,8 @@ export default function ManagementUsersPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
 
-  function load() {
-    setUsers(userService.getAll());
+  async function load() {
+    setUsers(await userRepository.getAll());
   }
   useEffect(() => {
     load();
@@ -143,13 +196,13 @@ export default function ManagementUsersPage() {
       return;
     }
     if (!confirm("Delete this user?")) return;
-    userService.delete(id);
+    userRepository.delete(id);
     toast.success("User deleted");
     load();
   }
 
-  function handleToggle(id, current) {
-    userService.update(id, { isActive: !current });
+  async function handleToggle(id, current) {
+    await userRepository.update(id, { isActive: !current });
     toast.success(`User ${current ? "deactivated" : "activated"}`);
     load();
   }

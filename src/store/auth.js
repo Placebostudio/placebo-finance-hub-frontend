@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { userService as backendUserService } from "@/services/backend-users";
+import { userRepository as backendUserService } from "@/services/backend-users";
 
 // Map old persisted role names to the current role system
 const ROLE_MIGRATION = { admin: "owner", finance: "manager", employee: "viewer" };

@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/layout/page-header";
-import { userService } from "@/services/user.service";
+import { userRepository } from "@/services/backend-users";
 import { useAuthStore } from "@/store/auth";
 import { getInitials } from "@/lib/utils";
 import { toast } from "sonner";
@@ -39,7 +39,7 @@ function UserDialog({ open, user, onClose, onSaved }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.fullName || !form.username) {
       toast.error("Full name and username are required");
       return;
@@ -50,8 +50,8 @@ function UserDialog({ open, user, onClose, onSaved }) {
     }
     const data = { ...form };
     if (!data.password) delete data.password;
-    if (user) userService.update(user.id, data);
-    else userService.create(data);
+    if (user) await userRepository.update(user.id, data);
+    else await userRepository.create(data);
     toast.success(user ? "User updated" : "User created");
     onSaved();
     onClose();
@@ -93,7 +93,7 @@ export default function UsersPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
 
-  function load() { setUsers(userService.getAll()); }
+  async function load() { setUsers(await userRepository.getAll()); }
   useEffect(() => { load(); }, []);
 
   if (currentUser?.role !== "owner") {
@@ -107,16 +107,16 @@ export default function UsersPage() {
     );
   }
 
-  function handleDelete(id) {
+  async function handleDelete(id) {
     if (id === currentUser.id) { toast.error("Cannot delete yourself"); return; }
     if (!confirm("Delete this user?")) return;
-    userService.delete(id);
+    await userRepository.delete(id);
     toast.success("User deleted");
     load();
   }
 
-  function handleToggle(id, current) {
-    userService.update(id, { isActive: !current });
+  async function handleToggle(id, current) {
+    await userRepository.update(id, { isActive: !current });
     toast.success(`User ${current ? "deactivated" : "activated"}`);
     load();
   }
