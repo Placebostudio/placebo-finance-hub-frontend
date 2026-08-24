@@ -324,5 +324,22 @@ export const reportRepository = {
 
 
         return result;
+    },
+
+    async getExpenseLedger() {
+
+        const response = await fetch(
+            `${BASE_URL}/expense-ledger`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || "Failed to get expense ledger"
+            );
+        }
+
+        return data;
     }
 };
