@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { userService } from "@/services/user.service";
+import { userService as backendUserService } from "@/services/backend-users";
 
 // Map old persisted role names to the current role system
 const ROLE_MIGRATION = { admin: "owner", finance: "manager", employee: "viewer" };
@@ -15,24 +15,22 @@ export const useAuthStore = create(
       user: null,
       isAuthenticated: false,
 
-      login: (username, password) => {
-        const user = userService.findByCredentials(username, password);
-        if (user) {
-          // Don't persist password in session
-          const session = {
-            id: user.id,
-            username: user.username,
-            fullName: user.fullName,
-            role: migrateRole(user.role),
-            email: user.email,
-          };
-          set({ user: session, isAuthenticated: true });
-          return true;
-        }
-        return false;
+      login: async (username, password) => {
+        // Throws on invalid credentials or network errors — caller handles the error
+        const data = await backendUserService.login(username, password);
+        const u = data.user;
+        const session = {
+          id: u.id,
+          username: u.username,
+          fullName: u.full_name,
+          role: migrateRole(u.role),
+          email: u.email,
+        };
+        set({ user: session, isAuthenticated: true });
       },
 
       logout: () => {
+        backendUserService.logout();
         set({ user: null, isAuthenticated: false });
       },
     }),

@@ -18,7 +18,7 @@ export default function LoginPage() {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!username || !password) {
       setError("Please enter username and password.");
@@ -26,16 +26,13 @@ export default function LoginPage() {
     }
     setIsLoading(true);
     setError(null);
-    // Small delay for UX
-    setTimeout(() => {
-      const success = login(username, password);
-      if (success) {
-        router.push("/dashboard");
-      } else {
-        setError("Invalid username or password.");
-        setIsLoading(false);
-      }
-    }, 300);
+    try {
+      await login(username, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err.message || "Invalid username or password.");
+      setIsLoading(false);
+    }
   };
 
   return (
