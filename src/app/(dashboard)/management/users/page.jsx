@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Users } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, ShieldAlert } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PageHeader } from "@/components/layout/page-header";
 import { userService } from "@/services/user.service";
-import { useAuthStore } from "@/store/auth";
+import { useOwnerGuard } from "@/hooks/use-owner-guard";
 import { getInitials } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ROLE_VARIANTS = { owner: "destructive", manager: "default", viewer: "secondary" };
+const ROLE_LABELS   = { owner: "Owner", manager: "Manager", viewer: "Viewer" };
 
 function UserDialog({ open, user, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -60,16 +61,38 @@ function UserDialog({ open, user, onClose, onSaved }) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>{user ? "Edit User" : "Add User"}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{user ? "Edit User" : "Add User"}</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
-          <div><Label className="text-xs">Full Name *</Label><Input value={form.fullName} onChange={(e) => set("fullName", e.target.value)} /></div>
-          <div><Label className="text-xs">Username *</Label><Input value={form.username} onChange={(e) => set("username", e.target.value)} /></div>
-          <div><Label className="text-xs">Email</Label><Input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} /></div>
-          <div><Label className="text-xs">{user ? "New Password (leave blank to keep)" : "Password *"}</Label><Input type="password" value={form.password} onChange={(e) => set("password", e.target.value)} /></div>
+          <div>
+            <Label className="text-xs">Full Name *</Label>
+            <Input value={form.fullName} onChange={(e) => set("fullName", e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Username *</Label>
+            <Input value={form.username} onChange={(e) => set("username", e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">Email</Label>
+            <Input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+          </div>
+          <div>
+            <Label className="text-xs">
+              {user ? "New Password (leave blank to keep)" : "Password *"}
+            </Label>
+            <Input
+              type="password"
+              value={form.password}
+              onChange={(e) => set("password", e.target.value)}
+            />
+          </div>
           <div>
             <Label className="text-xs">Role</Label>
             <Select value={form.role} onValueChange={(v) => set("role", v)}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="owner">Owner</SelectItem>
                 <SelectItem value="manager">Manager</SelectItem>
@@ -87,20 +110,27 @@ function UserDialog({ open, user, onClose, onSaved }) {
   );
 }
 
-export default function UsersPage() {
-  const { user: currentUser } = useAuthStore();
+export default function ManagementUsersPage() {
+  const { isAuthenticated, user: currentUser, isOwner } = useOwnerGuard();
   const [users, setUsers] = useState([]);
   const [showDialog, setShowDialog] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
 
-  function load() { setUsers(userService.getAll()); }
-  useEffect(() => { load(); }, []);
+  function load() {
+    setUsers(userService.getAll());
+  }
+  useEffect(() => {
+    load();
+  }, []);
 
-  if (currentUser?.role !== "owner") {
+  if (!isAuthenticated) return null;
+
+  if (!isOwner) {
     return (
       <div className="flex flex-col h-full">
-        <PageHeader title="Users" />
-        <div className="flex-1 flex items-center justify-center">
+        <PageHeader title="User Management" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <ShieldAlert className="h-12 w-12 text-muted-foreground/30" />
           <p className="text-muted-foreground text-sm">Owner access required</p>
         </div>
       </div>
@@ -108,7 +138,10 @@ export default function UsersPage() {
   }
 
   function handleDelete(id) {
-    if (id === currentUser.id) { toast.error("Cannot delete yourself"); return; }
+    if (id === currentUser.id) {
+      toast.error("Cannot delete yourself");
+      return;
+    }
     if (!confirm("Delete this user?")) return;
     userService.delete(id);
     toast.success("User deleted");
@@ -127,7 +160,13 @@ export default function UsersPage() {
         title="User Management"
         description="Manage system users and roles"
         actions={
-          <Button size="sm" onClick={() => { setEditingUser(null); setShowDialog(true); }}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setEditingUser(null);
+              setShowDialog(true);
+            }}
+          >
             <Plus className="mr-2 h-4 w-4" />
             Add User
           </Button>
@@ -158,20 +197,49 @@ export default function UsersPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium">{u.fullName}</p>
-                      <Badge variant={ROLE_VARIANTS[u.role] ?? "secondary"} className="text-xs">{u.role}</Badge>
-                      {!u.isActive && <Badge variant="outline" className="text-xs">Inactive</Badge>}
+                      <Badge
+                        variant={ROLE_VARIANTS[u.role] ?? "secondary"}
+                        className="text-xs"
+                      >
+                        {ROLE_LABELS[u.role] ?? u.role}
+                      </Badge>
+                      {!u.isActive && (
+                        <Badge variant="outline" className="text-xs">
+                          Inactive
+                        </Badge>
+                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground">{u.username} · {u.email}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {u.username} · {u.email}
+                    </p>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
-                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleToggle(u.id, u.isActive)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs"
+                      onClick={() => handleToggle(u.id, u.isActive)}
+                    >
                       {u.isActive ? "Deactivate" : "Activate"}
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditingUser(u); setShowDialog(true); }}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        setEditingUser(u);
+                        setShowDialog(true);
+                      }}
+                    >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
                     {u.id !== currentUser.id && (
-                      <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(u.id)}>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={() => handleDelete(u.id)}
+                      >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     )}

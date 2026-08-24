@@ -11,7 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageHeader } from "@/components/layout/page-header";
 import { PeriodSelector } from "@/components/layout/period-selector";
 import { expenseService } from "@/services/expense.service";
+import { auditService } from "@/services/audit.service";
 import { usePeriodStore } from "@/store/period";
+import { useAuthStore } from "@/store/auth";
 import { formatCurrency, formatDate, buildPeriod, periodLabel } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -21,6 +23,7 @@ const METHOD_ICONS = { credit_card: CreditCard, bank_transfer: Landmark, cash: B
 export default function ExpensesPage() {
   const { month, year, setPeriod } = usePeriodStore();
   const period = buildPeriod(year, month);
+  const { user: currentUser } = useAuthStore();
 
   const [expenses, setExpenses] = useState([]);
   const [search, setSearch] = useState("");
@@ -58,8 +61,34 @@ export default function ExpensesPage() {
 
   function handleDelete(id) {
     if (!confirm("Delete this expense?")) return;
-    expenseService.delete(id);
-    toast.success("Expense deleted");
+    const exp = expenseService.getById(id);
+    if (currentUser?.role === "owner") {
+      expenseService.hardDelete(id);
+      auditService.log({
+        actorId: currentUser.id,
+        actorName: currentUser.fullName,
+        action: "delete",
+        entityType: "expense",
+        entityId: id,
+        entityName: exp?.vendorName || exp?.documentNumber || id,
+        before: exp,
+        after: null,
+      });
+      toast.success("Expense permanently deleted");
+    } else {
+      expenseService.softDelete(id, currentUser?.id, currentUser?.fullName);
+      auditService.log({
+        actorId: currentUser?.id,
+        actorName: currentUser?.fullName,
+        action: "soft_delete_requested",
+        entityType: "expense",
+        entityId: id,
+        entityName: exp?.vendorName || exp?.documentNumber || id,
+        before: exp,
+        after: null,
+      });
+      toast.success("Expense deleted");
+    }
     load();
   }
 

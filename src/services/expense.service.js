@@ -5,6 +5,11 @@
  * in credit-card reconciliation.
  *
  * Expense statuses: draft | approved | rejected
+ *
+ * Soft-delete fields:
+ *   deletedAt:     ISO timestamp of soft deletion, or null
+ *   deletedBy:     userId who requested deletion, or null
+ *   deletedByName: display name of who requested deletion, or null
  */
 
 import { lsGetArray, lsSetArray } from "@/storage/local-store";
@@ -13,12 +18,24 @@ import { generateId } from "@/lib/utils";
 const STORE = "expenses";
 
 export const expenseService = {
-  getAll() {
+  /** Internal — all records including soft-deleted. */
+  _getAllRaw() {
     return lsGetArray(STORE);
   },
 
+  /** Public — active (non-deleted) expenses only. */
+  getAll() {
+    return this._getAllRaw().filter((e) => !e.deletedAt);
+  },
+
+  /** Returns only soft-deleted expenses (for Spam page). */
+  getAllDeleted() {
+    return this._getAllRaw().filter((e) => !!e.deletedAt);
+  },
+
+  /** Finds an expense by id regardless of deletion state. */
   getById(id) {
-    return this.getAll().find((e) => e.id === id) ?? null;
+    return this._getAllRaw().find((e) => e.id === id) ?? null;
   },
 
   getApproved() {
@@ -60,9 +77,12 @@ export const expenseService = {
       createdAt: now,
       updatedAt: now,
       approvedAt: data.status === "approved" ? now : null,
+      deletedAt: null,
+      deletedBy: null,
+      deletedByName: null,
     };
 
-    const all = this.getAll();
+    const all = this._getAllRaw();
     all.push(expense);
     lsSetArray(STORE, all);
     return expense;
@@ -72,16 +92,47 @@ export const expenseService = {
     const now = new Date().toISOString();
     const extra = {};
     if (changes.status === "approved") extra.approvedAt = now;
-    const all = this.getAll().map((e) =>
+    const all = this._getAllRaw().map((e) =>
       e.id === id ? { ...e, ...changes, ...extra, updatedAt: now } : e
     );
     lsSetArray(STORE, all);
     return all.find((e) => e.id === id) ?? null;
   },
 
-  delete(id) {
-    const all = this.getAll().filter((e) => e.id !== id);
+  /**
+   * Soft delete — marks the expense as deleted without removing it.
+   * Used when a non-owner clicks Delete; the expense enters the Spam queue.
+   */
+  softDelete(id, deletedBy, deletedByName) {
+    return this.update(id, {
+      deletedAt: new Date().toISOString(),
+      deletedBy: deletedBy ?? null,
+      deletedByName: deletedByName ?? null,
+    });
+  },
+
+  /**
+   * Restore — undo a soft delete. Expense returns to normal views.
+   */
+  restore(id) {
+    return this.update(id, {
+      deletedAt: null,
+      deletedBy: null,
+      deletedByName: null,
+    });
+  },
+
+  /**
+   * Hard delete — permanently removes the record.
+   */
+  hardDelete(id) {
+    const all = this._getAllRaw().filter((e) => e.id !== id);
     lsSetArray(STORE, all);
+  },
+
+  /** Alias kept for internal callers. */
+  delete(id) {
+    return this.hardDelete(id);
   },
 
   /** Return all expenses whose documentDate falls within the given YYYY-MM period. */

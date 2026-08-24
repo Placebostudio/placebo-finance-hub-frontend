@@ -14,7 +14,9 @@ import { PeriodSelector } from "@/components/layout/period-selector";
 import { documentService } from "@/services/document.service";
 import { expenseService } from "@/services/expense.service";
 import { reconciliationService } from "@/services/reconciliation.service";
+import { auditService } from "@/services/audit.service";
 import { usePeriodStore } from "@/store/period";
+import { useAuthStore } from "@/store/auth";
 import { formatDate, formatFileSize, buildPeriod, periodLabel, dateToPeriod } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -27,6 +29,7 @@ const STATUS_LABELS = {
 export default function DocumentsPage() {
   const { month, year, setPeriod } = usePeriodStore();
   const period = buildPeriod(year, month);
+  const { user: currentUser } = useAuthStore();
 
   const [documents, setDocuments]           = useState([]);
   const [expenses, setExpenses]             = useState([]);
@@ -107,8 +110,34 @@ export default function DocumentsPage() {
 
   async function handleDelete(id) {
     if (!confirm("Delete this document?")) return;
-    await documentService.delete(id);
-    toast.success("Document deleted");
+    const doc = documentService.getById(id);
+    if (currentUser?.role === "owner") {
+      await documentService.hardDelete(id);
+      auditService.log({
+        actorId: currentUser.id,
+        actorName: currentUser.fullName,
+        action: "delete",
+        entityType: "document",
+        entityId: id,
+        entityName: doc?.fileName ?? id,
+        before: doc,
+        after: null,
+      });
+      toast.success("Document permanently deleted");
+    } else {
+      documentService.softDelete(id, currentUser?.id, currentUser?.fullName);
+      auditService.log({
+        actorId: currentUser?.id,
+        actorName: currentUser?.fullName,
+        action: "soft_delete_requested",
+        entityType: "document",
+        entityId: id,
+        entityName: doc?.fileName ?? id,
+        before: doc,
+        after: null,
+      });
+      toast.success("Document deleted");
+    }
     load();
   }
 

@@ -46,22 +46,22 @@ export const APP_CONFIG = {
  */
 export const DEMO_USERS = [
   {
-    id: "user-admin",
+    id: "user-owner",
     username: "Placeboadmin",
     password: "Placebo2026",
     email: "admin@placebo.local",
     fullName: "Placebo Admin",
-    role: "admin",
+    role: "owner",
     isActive: true,
     createdAt: new Date().toISOString(),
   },
   {
-    id: "user-finance",
+    id: "user-manager",
     username: "finance",
     password: "Finance2026",
     email: "finance@placebo.local",
     fullName: "Finance Manager",
-    role: "finance",
+    role: "manager",
     isActive: true,
     createdAt: new Date().toISOString(),
   },
