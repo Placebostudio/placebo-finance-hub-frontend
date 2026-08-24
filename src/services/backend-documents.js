@@ -196,6 +196,77 @@ export const documentRepository = {
         return updatedDocument;
     },
 
+    // ============================================================
+    // SOFT DELETE DOCUMENT
+    // ============================================================
+
+    async softDelete(id) {
+
+        // Get the old version BEFORE changing it
+        const before = await this.getById(id);
+
+
+        // ========================================================
+        // UPDATE DOCUMENT
+        // ========================================================
+
+        const response = await fetch(
+            `${BASE_URL}/${id}`,
+            {
+                method: "PUT",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    deleted_at: new Date().toISOString()
+                })
+            }
+        );
+
+        const updatedDocument = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                updatedDocument.error ||
+                "Failed to soft delete document"
+            );
+        }
+
+
+        // ========================================================
+        // AUDIT LOG
+        // ========================================================
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id: currentUser.id,
+
+                action: "soft_delete",
+
+                entity_type: "document",
+
+                entity_id: id,
+
+                before: before,
+
+                after: updatedDocument,
+
+                ip_address: null,
+
+                user_agent: navigator.userAgent
+            });
+        }
+
+
+        return updatedDocument;
+    },
 
     // ============================================================
     // DELETE DOCUMENT
