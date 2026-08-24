@@ -16,6 +16,9 @@ import {
   Settings,
   ChevronLeft,
   Building2,
+  ShieldCheck,
+  ClipboardList,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -42,8 +45,13 @@ const navItems = [
   { label: "Vendors / Categories", href: "/vendors", icon: Tag },
 ];
 
+const managementItems = [
+  { label: "User Management", href: "/management/users", icon: Users },
+  { label: "Audit Log", href: "/management/audit-log", icon: ClipboardList },
+  { label: "Spam", href: "/management/spam", icon: Trash2 },
+];
+
 const bottomNavItems = [
-  { label: "Users", href: "/users", icon: Users },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -106,6 +114,7 @@ function NavLink({ item, sidebarOpen, depth = 0 }) {
 export function Sidebar() {
   const { sidebarOpen, setSidebarOpen } = useAppStore();
   const { user, logout } = useAuthStore();
+  const isOwner = user?.role === "owner";
 
   return (
     <>
@@ -158,6 +167,30 @@ export function Sidebar() {
           {navItems.map((item) => (
             <NavLink key={item.href ?? item.label} item={item} sidebarOpen={sidebarOpen} />
           ))}
+
+          {/* Management section — owner only */}
+          {isOwner && (
+            <div className="mt-4">
+              {sidebarOpen && (
+                <div className="flex items-center gap-2 px-3 py-1.5 mb-1">
+                  <ShieldCheck className="h-3.5 w-3.5 text-sidebar-foreground/40 flex-shrink-0" />
+                  <span className="text-xs font-medium uppercase tracking-wider text-sidebar-foreground/40">
+                    Management
+                  </span>
+                </div>
+              )}
+              {!sidebarOpen && (
+                <div className="flex justify-center py-1.5 mb-1">
+                  <ShieldCheck className="h-3.5 w-3.5 text-sidebar-foreground/40" title="Management" />
+                </div>
+              )}
+              <div className="space-y-1">
+                {managementItems.map((item) => (
+                  <NavLink key={item.href} item={item} sidebarOpen={sidebarOpen} />
+                ))}
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* Bottom nav */}

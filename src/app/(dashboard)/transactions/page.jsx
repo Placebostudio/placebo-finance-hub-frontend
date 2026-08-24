@@ -19,6 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { PageHeader } from "@/components/layout/page-header";
 import { statementService } from "@/services/statement.service";
+import { auditService } from "@/services/audit.service";
+import { useAuthStore } from "@/store/auth";
 import { transactionService } from "@/services/transaction.service";
 import { APP_CONFIG } from "@/config";
 import { formatCurrency, formatDate, generateId, buildPeriod, periodLabel } from "@/lib/utils";
@@ -183,6 +185,7 @@ function stageLabel(stage, detail) {
 export default function TransactionsPage() {
   // ── Period state (shared across all finance pages via period store) ──────────
   const { month: periodMonth, year: periodYear, setPeriod } = usePeriodStore();
+  const { user: currentUser } = useAuthStore();
   const selectedPeriod = buildPeriod(periodYear, periodMonth);
 
   // ── Data state ────────────────────────────────────────────────────────────
@@ -289,11 +292,37 @@ export default function TransactionsPage() {
 
   const handleDeleteStatement = async (id) => {
     if (!confirm("Delete this statement and all its transactions?")) return;
-    transactionService.deleteByStatement(id);
-    await statementService.delete(id);
+    const stmt = statementService.getById(id);
+    if (currentUser?.role === "owner") {
+      transactionService.deleteByStatement(id);
+      await statementService.hardDelete(id);
+      auditService.log({
+        actorId: currentUser.id,
+        actorName: currentUser.fullName,
+        action: "delete",
+        entityType: "statement",
+        entityId: id,
+        entityName: stmt?.fileName || stmt?.period || id,
+        before: stmt,
+        after: null,
+      });
+      toast.success("Statement permanently deleted");
+    } else {
+      statementService.softDelete(id, currentUser?.id, currentUser?.fullName);
+      auditService.log({
+        actorId: currentUser?.id,
+        actorName: currentUser?.fullName,
+        action: "soft_delete_requested",
+        entityType: "statement",
+        entityId: id,
+        entityName: stmt?.fileName || stmt?.period || id,
+        before: stmt,
+        after: null,
+      });
+      toast.success("Statement deleted");
+    }
     if (selectedStatement === id) setSelectedStatement(null);
     load();
-    toast.success("Statement deleted");
   };
 
   // ── PDF statement import ──────────────────────────────────────────────────

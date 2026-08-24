@@ -8,6 +8,11 @@
  *
  * extractionStatus: 'uploaded' | 'extracting' | 'ready_for_review' | 'failed'
  * status:           'pending_review' | 'approved' | 'rejected'
+ *
+ * Soft-delete fields (added when a non-owner deletes):
+ *   deletedAt:     ISO timestamp of soft deletion, or null
+ *   deletedBy:     userId who requested deletion, or null
+ *   deletedByName: display name of who requested deletion, or null
  */
 
 import { lsGetArray, lsSetArray } from "@/storage/local-store";
@@ -17,12 +22,24 @@ import { generateId } from "@/lib/utils";
 const STORE = "documents";
 
 export const documentService = {
-  getAll() {
+  /** Internal — all records including soft-deleted. */
+  _getAllRaw() {
     return lsGetArray(STORE);
   },
 
+  /** Public — active (non-deleted) documents only. */
+  getAll() {
+    return this._getAllRaw().filter((d) => !d.deletedAt);
+  },
+
+  /** Returns only soft-deleted documents (for Spam page). */
+  getAllDeleted() {
+    return this._getAllRaw().filter((d) => !!d.deletedAt);
+  },
+
+  /** Finds a document by id regardless of deletion state. */
   getById(id) {
-    return this.getAll().find((d) => d.id === id) ?? null;
+    return this._getAllRaw().find((d) => d.id === id) ?? null;
   },
 
   getPendingReview() {
@@ -43,11 +60,14 @@ export const documentService = {
       uploadedAt: new Date().toISOString(),
       uploadedBy,
       notes: "",
+      deletedAt: null,
+      deletedBy: null,
+      deletedByName: null,
     };
 
     await fileDB.saveDocumentFile(id, file);
 
-    const all = this.getAll();
+    const all = this._getAllRaw();
     all.push(doc);
     lsSetArray(STORE, all);
 
@@ -72,16 +92,48 @@ export const documentService = {
   },
 
   update(id, changes) {
-    const all = this.getAll().map((d) =>
+    const all = this._getAllRaw().map((d) =>
       d.id === id ? { ...d, ...changes, updatedAt: new Date().toISOString() } : d
     );
     lsSetArray(STORE, all);
     return all.find((d) => d.id === id) ?? null;
   },
 
-  async delete(id) {
-    const all = this.getAll().filter((d) => d.id !== id);
+  /**
+   * Soft delete — marks the document as deleted without removing data or files.
+   * Used when a non-owner clicks Delete; the document enters the Spam queue.
+   */
+  softDelete(id, deletedBy, deletedByName) {
+    return this.update(id, {
+      deletedAt: new Date().toISOString(),
+      deletedBy: deletedBy ?? null,
+      deletedByName: deletedByName ?? null,
+    });
+  },
+
+  /**
+   * Restore — undo a soft delete. Document returns to normal views.
+   */
+  restore(id) {
+    return this.update(id, {
+      deletedAt: null,
+      deletedBy: null,
+      deletedByName: null,
+    });
+  },
+
+  /**
+   * Hard delete — permanently removes the record and the associated file.
+   * Used by the owner either directly or from the Spam page.
+   */
+  async hardDelete(id) {
+    const all = this._getAllRaw().filter((d) => d.id !== id);
     lsSetArray(STORE, all);
-    await fileDB.deleteDocumentFile(id);
+    await fileDB.deleteDocumentFile(id).catch(() => {});
+  },
+
+  /** Alias kept for internal callers that still use .delete() */
+  async delete(id) {
+    return this.hardDelete(id);
   },
 };
