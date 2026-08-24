@@ -1,4 +1,4 @@
-const BASE_URL = `${"http://localhost:5173"}/api/users`;
+const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/users`;
 
 const LOGGED_IN_USER_KEY = "logged_in_user";
 

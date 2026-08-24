@@ -4,6 +4,7 @@ import { BarChart3, CheckCircle2, AlertTriangle, FileSpreadsheet, FileText, Load
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/page-header";
 import { PeriodSelector } from "@/components/layout/period-selector";
 import { expenseService } from "@/services/expense.service";
@@ -13,6 +14,7 @@ import { statementService } from "@/services/statement.service";
 import { settingsService } from "@/services/settings.service";
 import { formatCurrency, buildPeriod, periodLabel } from "@/lib/utils";
 import { usePeriodStore } from "@/store/period";
+import ExpenseLedger from "./ExpenseLedger";
 
 function StatRow({ label, value, sub }) {
   return (
@@ -26,7 +28,7 @@ function StatRow({ label, value, sub }) {
   );
 }
 
-export default function ReportsPage() {
+function OverviewTab() {
   const { month, year, setPeriod: setStorePeriod } = usePeriodStore();
   const period = buildPeriod(year, month);
 
@@ -51,8 +53,6 @@ export default function ReportsPage() {
 
     const ccExpensesWithoutCharge = ccExpenses.filter((e) => !matchedExpenseIds.has(e.id));
 
-    // Transactions are scoped by statement accounting period, not transaction date.
-    // This ensures a July statement uploaded in August still appears in the July report.
     const periodStmts = statementService.getByPeriod(period);
     const periodStmtIds = new Set(periodStmts.map((s) => s.id));
     const periodTxns = allTxns.filter((t) => periodStmtIds.has(t.statementId));
@@ -88,7 +88,6 @@ export default function ReportsPage() {
       isReady,
     });
 
-    // Full data for export
     setReportData({
       period,
       periodLabel: periodLabel(period),
@@ -140,25 +139,19 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader
-        title="Reports"
-        description="Monthly financial summary"
-      />
-
-      <div className="px-6 pt-4">
-        <div className="flex items-center gap-4 flex-wrap rounded-lg border bg-muted/30 px-4 py-2.5">
-          <PeriodSelector
-            month={month}
-            year={year}
-            onChange={setStorePeriod}
-            label="Report Period"
-          />
-        </div>
+    <div className="p-6 space-y-6 max-w-3xl">
+      {/* Period selector */}
+      <div className="flex items-center gap-4 flex-wrap rounded-lg border bg-muted/30 px-4 py-2.5">
+        <PeriodSelector
+          month={month}
+          year={year}
+          onChange={setStorePeriod}
+          label="Report Period"
+        />
       </div>
 
       {report && (
-        <div className="flex-1 p-6 space-y-6 overflow-auto max-w-3xl">
+        <>
           {/* Readiness banner */}
           <Card className={report.isReady ? "border-green-400 bg-green-50 dark:bg-green-900/20" : "border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20"}>
             <CardContent className="p-4 flex items-center gap-3">
@@ -275,8 +268,42 @@ export default function ReportsPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
+        </>
       )}
+    </div>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <div className="flex flex-col h-full">
+      <PageHeader
+        title="Reports"
+        description="Monthly financial summary"
+      />
+
+      <Tabs defaultValue="overview" className="flex-1 min-h-0 flex flex-col">
+        <div className="px-6 pt-4 flex-shrink-0">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="expense-ledger">Expense Ledger</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent
+          value="overview"
+          className="flex-1 min-h-0 overflow-auto mt-0"
+        >
+          <OverviewTab />
+        </TabsContent>
+
+        <TabsContent
+          value="expense-ledger"
+          className="flex-1 min-h-0 overflow-auto mt-0 px-6 py-4"
+        >
+          <ExpenseLedger />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5173/api/audit_logs";
+const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/audit_logs`;
 
 export const auditRepository = {
 

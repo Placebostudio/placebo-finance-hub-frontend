@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5173/api/matches";
+const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/matches`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
