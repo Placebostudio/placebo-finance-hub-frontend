@@ -15,6 +15,7 @@ import {
   Users,
   Settings,
   ChevronLeft,
+  Menu,
   Building2,
   ShieldCheck,
   ClipboardList,
@@ -118,6 +119,7 @@ export function Sidebar() {
 
   return (
     <>
+      {/* Mobile overlay — click to close */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/50 lg:hidden"
@@ -125,15 +127,28 @@ export function Sidebar() {
         />
       )}
 
+      {/* Mobile hamburger button — visible only when sidebar is closed on mobile */}
+      {!sidebarOpen && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed top-4 left-3 z-40 h-9 w-9 lg:hidden text-foreground"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      )}
+
       <aside
         className={cn(
           "fixed left-0 top-0 z-30 flex h-full flex-col border-r bg-sidebar transition-all duration-300",
-          sidebarOpen ? "w-64" : "w-16",
+          sidebarOpen ? "w-64" : "w-0 lg:w-16 overflow-hidden",
           "lg:relative lg:z-auto"
         )}
       >
         {/* Logo */}
-        <div className="flex h-16 items-center border-b px-4">
+        <div className="flex h-16 items-center border-b px-4 flex-shrink-0">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary">
               <Building2 className="h-5 w-5 text-primary-foreground" />
@@ -150,10 +165,7 @@ export function Sidebar() {
           <Button
             variant="ghost"
             size="icon"
-            className={cn(
-              "ml-auto h-8 w-8 flex-shrink-0 text-sidebar-foreground/60 hover:text-sidebar-foreground",
-              !sidebarOpen && "hidden lg:flex"
-            )}
+            className="ml-auto h-8 w-8 flex-shrink-0 text-sidebar-foreground/60 hover:text-sidebar-foreground"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
             <ChevronLeft

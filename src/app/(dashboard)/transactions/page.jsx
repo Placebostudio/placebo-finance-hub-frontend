@@ -28,85 +28,6 @@ import { PeriodSelector } from "@/components/layout/period-selector";
 import { usePeriodStore } from "@/store/period";
 import { toast } from "sonner";
 
-// ── Manual transaction entry dialog ──────────────────────────────────────────
-function ManualEntryDialog({ open, onClose, statementId, statementPeriod, onSaved }) {
-  const [form, setForm] = useState({
-    transactionDate: "", postingDate: "", description: "",
-    originalAmount: "", originalCurrency: "ILS",
-    billedAmount: "", billedCurrency: "ILS", cardLastFour: "",
-  });
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-
-  const handleSave = () => {
-    if (!form.description || !form.transactionDate || !form.billedAmount) {
-      toast.error("Description, date and amount are required");
-      return;
-    }
-    transactionService.create({
-      ...form,
-      statementId,
-      statementPeriod,
-      originalAmount: parseFloat(form.originalAmount) || parseFloat(form.billedAmount),
-      billedAmount: parseFloat(form.billedAmount),
-    });
-    toast.success("Transaction added");
-    onSaved();
-    onClose();
-    setForm({
-      transactionDate: "", postingDate: "", description: "",
-      originalAmount: "", originalCurrency: "ILS",
-      billedAmount: "", billedCurrency: "ILS", cardLastFour: "",
-    });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Add Transaction</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label className="text-xs">Description *</Label>
-            <Input value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="Merchant name" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Transaction Date *</Label>
-              <Input type="date" value={form.transactionDate} onChange={(e) => set("transactionDate", e.target.value)} />
-            </div>
-            <div>
-              <Label className="text-xs">Posting Date</Label>
-              <Input type="date" value={form.postingDate} onChange={(e) => set("postingDate", e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Amount (billed) *</Label>
-              <Input type="number" step="0.01" value={form.billedAmount} onChange={(e) => set("billedAmount", e.target.value)} placeholder="0.00" />
-            </div>
-            <div>
-              <Label className="text-xs">Currency</Label>
-              <Select value={form.billedCurrency} onValueChange={(v) => set("billedCurrency", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {APP_CONFIG.supportedCurrencies.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs">Card Last 4 Digits</Label>
-            <Input value={form.cardLastFour} onChange={(e) => set("cardLastFour", e.target.value)} placeholder="4242" maxLength={4} />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={handleSave}>Add Transaction</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ── Preview row edit dialog ───────────────────────────────────────────────────
 function EditRowDialog({ row, open, onClose, onSave }) {
   const [form, setForm] = useState(row ?? {});
@@ -196,7 +117,6 @@ export default function TransactionsPage() {
   const [importPreview, setImportPreview] = useState([]);
   const [importError, setImportError]   = useState(null);
   const [isImporting, setIsImporting]   = useState(false);
-  const [showManual, setShowManual]     = useState(false);
 
   // PDF import state
   const [pdfFile, setPdfFile]           = useState(null);
@@ -207,6 +127,7 @@ export default function TransactionsPage() {
   const [pdfExtractedText, setPdfExtractedText] = useState("");
   const [editingRow, setEditingRow]     = useState(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  // showManual removed — Add Manually flow is not available
 
   function load() {
     setStatements(statementService.getAll());
@@ -464,14 +385,6 @@ export default function TransactionsPage() {
                   </SelectContent>
                 </Select>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowManual(true)}
-                disabled={periodStatements.length === 0}
-              >
-                <Plus className="mr-2 h-4 w-4" />Add Manually
-              </Button>
             </div>
 
             {periodStatements.length === 0 ? (
@@ -908,14 +821,6 @@ export default function TransactionsPage() {
           </TabsContent>
         </Tabs>
       </div>
-
-      <ManualEntryDialog
-        open={showManual}
-        onClose={() => setShowManual(false)}
-        statementId={selectedStatement ?? periodStatements[periodStatements.length - 1]?.id}
-        statementPeriod={selectedPeriod}
-        onSaved={load}
-      />
 
       <EditRowDialog
         row={editingRow}

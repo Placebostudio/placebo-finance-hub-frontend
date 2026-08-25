@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   CheckCircle2, XCircle, Save, FileText, ChevronLeft,
@@ -19,8 +19,20 @@ import { documentService } from "@/services/document.service";
 import { expenseService } from "@/services/expense.service";
 import { APP_CONFIG } from "@/config";
 import { calculateFromGross } from "@/lib/utils";
+import { getCountryVatRate, COUNTRY_NAMES } from "@/config/vat-config";
 import { toast } from "sonner";
 import Link from "next/link";
+
+// Reverse lookup: lowercase country name → ISO code
+// e.g. "israel" → "IL", "germany" → "DE"
+const _NAME_TO_CODE = Object.fromEntries(
+  Object.entries(COUNTRY_NAMES).map(([code, name]) => [name.toLowerCase(), code])
+);
+
+function countryNameToCode(name) {
+  if (!name) return null;
+  return _NAME_TO_CODE[name.trim().toLowerCase()] ?? null;
+}
 
 const EMPTY_FORM = {
   vendorName: "",
@@ -119,6 +131,10 @@ export default function ReviewPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  // Track whether the user has explicitly typed a VAT rate so we don't overwrite it
+  const vatManuallySet = useRef(false);
+  // Track whether the country was just set from extraction (not a user change)
+  const countryFromExtraction = useRef(false);
 
   useEffect(() => {
     if (!id) return;
@@ -127,6 +143,7 @@ export default function ReviewPage() {
     setDoc(d);
 
     if (d.extractionResult?.fields) {
+      countryFromExtraction.current = true;
       setForm(formFromExtraction(d.extractionResult.fields));
     }
 
@@ -136,6 +153,38 @@ export default function ReviewPage() {
   }, [id]);
 
   useEffect(() => () => { if (fileUrl) URL.revokeObjectURL(fileUrl); }, [fileUrl]);
+
+  // When Country changes (from any source), look up the standard VAT rate and apply
+  // it — unless the user has already manually overridden the VAT Rate field.
+  useEffect(() => {
+    if (countryFromExtraction.current) {
+      // This update came from loading extraction data — reset flag but don't
+      // treat the immediately-loaded vatRate as a manual override.
+      countryFromExtraction.current = false;
+      vatManuallySet.current = false;
+      return;
+    }
+
+    if (vatManuallySet.current) return;
+
+    const code = countryNameToCode(form.country);
+    if (!code) return;
+
+    const rate = getCountryVatRate(code);
+    if (rate == null) return; // country has no VAT (e.g. US, CA) — leave field alone
+
+    const rateStr = String(rate);
+    setForm((f) => {
+      if (f.vatRate === rateStr) return f; // already correct, avoid re-render
+      const gross = parseFloat(f.grossAmount);
+      if (!isNaN(gross) && gross > 0) {
+        const { netAmount, vatAmount } = calculateFromGross(gross, rate);
+        return { ...f, vatRate: rateStr, netAmount: String(netAmount), vatAmount: String(vatAmount) };
+      }
+      return { ...f, vatRate: rateStr };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.country]);
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -168,10 +217,12 @@ export default function ReviewPage() {
         dueDate:        form.dueDate,
         currency:       form.currency,
         country:        form.country,
-        netAmount:      parseFloat(form.netAmount)   || 0,
-        vatRate:        parseFloat(form.vatRate)     || 0,
-        vatAmount:      parseFloat(form.vatAmount)   || 0,
-        grossAmount:    parseFloat(form.grossAmount) || 0,
+        // Preserve null/empty rather than coercing to 0 — the user may not have
+        // provided these values, and 0 has a different financial meaning than absent.
+        netAmount:      form.netAmount   !== "" ? parseFloat(form.netAmount)   : null,
+        vatRate:        form.vatRate     !== "" ? parseFloat(form.vatRate)     : null,
+        vatAmount:      form.vatAmount   !== "" ? parseFloat(form.vatAmount)   : null,
+        grossAmount:    form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
         category:       form.category,
         paymentMethod:  form.paymentMethod,
         notes:          form.notes,
@@ -440,6 +491,7 @@ export default function ReviewPage() {
                     max="100"
                     value={form.vatRate}
                     onChange={(e) => {
+                      vatManuallySet.current = true;
                       set("vatRate", e.target.value);
                       recalcFromGross(form.grossAmount, e.target.value);
                     }}
