@@ -1,7 +1,10 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/document_attachments`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/document_attachments`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
+
+
 
 export const documentAttachmentRepository = {
 
@@ -37,7 +40,8 @@ export const documentAttachmentRepository = {
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get document attachments"
+                data.error ||
+                "Failed to get document attachments"
             );
         }
 
@@ -59,7 +63,8 @@ export const documentAttachmentRepository = {
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get document attachment"
+                data.error ||
+                "Failed to get document attachment"
             );
         }
 
@@ -68,24 +73,29 @@ export const documentAttachmentRepository = {
 
 
     // ============================================================
-    // ADD DOCUMENT ATTACHMENT
-    // ============================================================
+    // UPLOAD DOCUMENT
     //
-    // data should be a FormData object containing:
+    // POST /api/document_attachments
     //
-    // file
-    // document_id
-    // uploaded_by
-    //
+    // Sends the actual file as multipart/form-data.
     // ============================================================
 
-    async create(data) {
+    async upload(file, uploadedBy, notes = "") {
+
+        const formData = new FormData();
+
+        formData.append("file", file);
+        formData.append("uploaded_by", uploadedBy);
+
+        if (notes) {
+            formData.append("notes", notes);
+        }
 
         const response = await fetch(
             BASE_URL,
             {
                 method: "POST",
-                body: data
+                body: formData
             }
         );
 
@@ -94,10 +104,12 @@ export const documentAttachmentRepository = {
         if (!response.ok) {
             throw new Error(
                 result.error ||
-                "Failed to create document attachment"
+                "Failed to upload document"
             );
         }
 
+        const document =
+            result.document ?? result;
 
         // ========================================================
         // AUDIT LOG
@@ -106,7 +118,7 @@ export const documentAttachmentRepository = {
         const currentUser =
             userRepository.getLoggedInUser();
 
-        if (currentUser && result.id) {
+        if (currentUser && document.id) {
 
             await auditRepository.create({
 
@@ -114,13 +126,13 @@ export const documentAttachmentRepository = {
 
                 action: "create",
 
-                entity_type: "document_attachment",
+                entity_type: "document",
 
-                entity_id: result.id,
+                entity_id: document.id,
 
                 before: null,
 
-                after: result,
+                after: document,
 
                 ip_address: null,
 
@@ -128,8 +140,7 @@ export const documentAttachmentRepository = {
             });
         }
 
-
-        return result;
+        return document;
     },
 
 
@@ -139,7 +150,8 @@ export const documentAttachmentRepository = {
 
     async update(id, data) {
 
-        const before = await this.getById(id);
+        const before =
+            await this.getById(id);
 
         const response = await fetch(
             `${BASE_URL}/${id}`,
@@ -154,15 +166,18 @@ export const documentAttachmentRepository = {
             }
         );
 
-        const updatedAttachment = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                updatedAttachment.error ||
+                result.error ||
                 "Failed to update document attachment"
             );
         }
 
+        const document =
+            result.document ?? result;
 
         // ========================================================
         // AUDIT LOG
@@ -179,13 +194,13 @@ export const documentAttachmentRepository = {
 
                 action: "update",
 
-                entity_type: "document_attachment",
+                entity_type: "document",
 
                 entity_id: id,
 
                 before: before,
 
-                after: updatedAttachment,
+                after: document,
 
                 ip_address: null,
 
@@ -193,18 +208,24 @@ export const documentAttachmentRepository = {
             });
         }
 
-
-        return updatedAttachment;
+        return document;
     },
 
 
     // ============================================================
-    // DELETE DOCUMENT ATTACHMENT
+    // SOFT DELETE DOCUMENT
+    //
+    // Backend DELETE route performs:
+    //
+    // deleted_at = NOW()
+    //
+    // The physical Supabase file is NOT deleted.
     // ============================================================
 
     async delete(id) {
 
-        const before = await this.getById(id);
+        const before =
+            await this.getById(id);
 
         const response = await fetch(
             `${BASE_URL}/${id}`,
@@ -213,15 +234,18 @@ export const documentAttachmentRepository = {
             }
         );
 
-        const result = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
                 result.error ||
-                "Failed to delete document attachment"
+                "Failed to delete document"
             );
         }
 
+        const document =
+            result.document ?? result;
 
         // ========================================================
         // AUDIT LOG
@@ -236,15 +260,15 @@ export const documentAttachmentRepository = {
 
                 actor_id: currentUser.id,
 
-                action: "delete",
+                action: "soft_delete",
 
-                entity_type: "document_attachment",
+                entity_type: "document",
 
                 entity_id: id,
 
                 before: before,
 
-                after: null,
+                after: document,
 
                 ip_address: null,
 
@@ -252,7 +276,112 @@ export const documentAttachmentRepository = {
             });
         }
 
+        return result;
+    },
+
+
+    // ============================================================
+    // GET EXTRACTIONS
+    // ============================================================
+
+    async getExtractions(id) {
+
+        const response = await fetch(
+            `${BASE_URL}/${id}/extractions`
+        );
+
+        const result =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.error ||
+                "Failed to get document extractions"
+            );
+        }
 
         return result;
+    },
+
+
+    // ============================================================
+    // GET CURRENT EXTRACTION
+    // ============================================================
+
+    async getCurrentExtraction(id) {
+
+        const response = await fetch(
+            `${BASE_URL}/${id}/extractions/current`
+        );
+
+        const result =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.error ||
+                "Failed to get current extraction"
+            );
+        }
+
+        return result;
+    },
+
+
+    // ============================================================
+    // ADD EXTRACTION
+    // ============================================================
+
+    async addExtraction(id, data) {
+
+        const response = await fetch(
+            `${BASE_URL}/${id}/extractions`,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify(data)
+            }
+        );
+
+        const result =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.error ||
+                "Failed to add document extraction"
+            );
+        }
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id: currentUser.id,
+
+                action: "create",
+
+                entity_type: "document_extraction",
+
+                entity_id: id,
+
+                before: null,
+
+                after: result.extraction ?? result,
+
+                ip_address: null,
+
+                user_agent: navigator.userAgent
+            });
+        }
+
+        return result.extraction ?? result;
     }
 };

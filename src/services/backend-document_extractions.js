@@ -1,7 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/document-extractions`;
-
-import { auditRepository } from "./backend-audits.js";
-import { userRepository } from "./backend-users.js";
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/document_extractions`;
 
 export const documentExtractionRepository = {
 
@@ -47,13 +45,16 @@ export const documentExtractionRepository = {
 
 
     // ============================================================
-    // GET ONE DOCUMENT EXTRACTION
+    // GET EXTRACTION FOR DOCUMENT
+    //
+    // The database does not have an extraction ID.
+    // document_id is the identifier.
     // ============================================================
 
-    async getById(id) {
+    async getById(documentId) {
 
         const response = await fetch(
-            `${BASE_URL}/${id}`
+            `${BASE_URL}/${documentId}`
         );
 
         const data = await response.json();
@@ -72,46 +73,50 @@ export const documentExtractionRepository = {
     // ============================================================
     // CREATE DOCUMENT EXTRACTION
     //
-    // Uses multipart/form-data because the backend route
-    // expects upload.single("file").
+    // The file has ALREADY been uploaded.
+    //
+    // This only creates the document_extractions row.
     // ============================================================
 
-    async create(data, file) {
-
-        const formData = new FormData();
-
-        Object.entries(data || {}).forEach(([key, value]) => {
-
-            if (
-                value !== undefined &&
-                value !== null
-            ) {
-
-                if (
-                    typeof value === "object" &&
-                    !(value instanceof File)
-                ) {
-                    formData.append(
-                        key,
-                        JSON.stringify(value)
-                    );
-                } else {
-                    formData.append(key, value);
-                }
-            }
-        });
-
-
-        if (file) {
-            formData.append("file", file);
-        }
-
+    async create(data) {
 
         const response = await fetch(
             BASE_URL,
             {
                 method: "POST",
-                body: formData
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    document_id:
+                        data.document_id,
+
+                    method:
+                        data.method,
+
+                    fields:
+                        data.fields ?? {},
+
+                    validation_issues:
+                        data.validation_issues ?? [],
+
+                    full_text:
+                        data.full_text ?? null,
+
+                    confidence:
+                        data.confidence ?? null,
+
+                    duration_ms:
+                        data.duration_ms ?? null,
+
+                    is_current:
+                        data.is_current ?? true,
+
+                    spam:
+                        data.spam ?? false
+                })
             }
         );
 
@@ -124,52 +129,25 @@ export const documentExtractionRepository = {
             );
         }
 
-
-        // ========================================================
-        // AUDIT LOG
-        // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser && result.id) {
-
-            await auditRepository.create({
-
-                actor_id: currentUser.id,
-
-                action: "create",
-
-                entity_type: "document_extraction",
-
-                entity_id: result.id,
-
-                before: null,
-
-                after: result,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
-
-
-        return result;
+        return result.extraction ?? result;
     },
 
 
     // ============================================================
     // UPDATE DOCUMENT EXTRACTION
+    //
+    // id = document_id
+    // because document_extractions has no separate id.
     // ============================================================
 
-    async update(id, data) {
+    async update(documentId, data) {
 
-        const before = await this.getById(id);
+        const before =
+            await this.getById(documentId);
 
 
         const response = await fetch(
-            `${BASE_URL}/${id}`,
+            `${BASE_URL}/${documentId}`,
             {
                 method: "PUT",
 
@@ -181,63 +159,38 @@ export const documentExtractionRepository = {
             }
         );
 
-        const updatedExtraction = await response.json();
+        const result = await response.json();
 
         if (!response.ok) {
             throw new Error(
-                updatedExtraction.error ||
+                result.error ||
                 "Failed to update document extraction"
             );
         }
 
-
-        // ========================================================
-        // AUDIT LOG
-        // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser) {
-
-            await auditRepository.create({
-
-                actor_id: currentUser.id,
-
-                action: "update",
-
-                entity_type: "document_extraction",
-
-                entity_id: id,
-
-                before: before,
-
-                after: updatedExtraction,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
-
-
-        return updatedExtraction;
+        return {
+            before,
+            extraction:
+                result.extraction ?? result
+        };
     },
 
 
     // ============================================================
-    // SOFT DELETE DOCUMENT EXTRACTION
+    // MARK EXTRACTION AS SPAM
     //
-    // Soft delete is an UPDATE of spam only.
+    // There is no deleted_at column.
+    // spam is the appropriate field.
     // ============================================================
 
-    async softDelete(id) {
+    async softDelete(documentId) {
 
-        const before = await this.getById(id);
+        const before =
+            await this.getById(documentId);
 
 
         const response = await fetch(
-            `${BASE_URL}/${id}`,
+            `${BASE_URL}/${documentId}`,
             {
                 method: "PUT",
 
@@ -251,63 +204,37 @@ export const documentExtractionRepository = {
             }
         );
 
-        const updatedExtraction = await response.json();
+        const result = await response.json();
 
         if (!response.ok) {
             throw new Error(
-                updatedExtraction.error ||
-                "Failed to soft delete document extraction"
+                result.error ||
+                "Failed to mark document extraction as spam"
             );
         }
 
-
-        // ========================================================
-        // AUDIT LOG
-        // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser) {
-
-            await auditRepository.create({
-
-                actor_id: currentUser.id,
-
-                action: "soft_delete",
-
-                entity_type: "document_extraction",
-
-                entity_id: id,
-
-                before: before,
-
-                after: updatedExtraction,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
-
-
-        return updatedExtraction;
+        return {
+            before,
+            extraction:
+                result.extraction ?? result
+        };
     },
 
 
     // ============================================================
     // DELETE DOCUMENT EXTRACTION
     //
-    // Permanent/final delete.
+    // Permanent delete.
     // ============================================================
 
-    async delete(id) {
+    async delete(documentId) {
 
-        const before = await this.getById(id);
+        const before =
+            await this.getById(documentId);
 
 
         const response = await fetch(
-            `${BASE_URL}/${id}`,
+            `${BASE_URL}/${documentId}`,
             {
                 method: "DELETE"
             }
@@ -322,37 +249,9 @@ export const documentExtractionRepository = {
             );
         }
 
-
-        // ========================================================
-        // AUDIT LOG
-        // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser) {
-
-            await auditRepository.create({
-
-                actor_id: currentUser.id,
-
-                action: "delete",
-
-                entity_type: "document_extraction",
-
-                entity_id: id,
-
-                before: before,
-
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
-
-
-        return result;
+        return {
+            before,
+            result
+        };
     }
 };

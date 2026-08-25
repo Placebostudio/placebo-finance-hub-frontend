@@ -12,6 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { PageHeader } from "@/components/layout/page-header";
 import { documentService } from "@/services/document.service";
+import { documentRepository } from "@/services/backend-documents";
+import { documentAttachmentRepository } from "@/services/backend-document_attachments";
+import { documentExtractionRepository } from "@/services/backend-document_extractions";
+import { auditRepository } from "@/services/backend-audits";
+import { userRepository } from "@/services/backend-users";
 import { useAuthStore } from "@/store/auth";
 import { cn, formatFileSize } from "@/lib/utils";
 import { APP_CONFIG } from "@/config";
@@ -36,92 +41,373 @@ export default function UploadPage() {
   const [queue, setQueue] = useState([]);
 
   const processFile = useCallback(async (file, queueId) => {
-    // Phase 1 — save to IndexedDB
-    setQueue((q) =>
-      q.map((i) => i.id === queueId ? { ...i, status: "uploading", progress: 5, stage: "Uploading…" } : i)
-    );
 
-    let doc;
-    try {
-      doc = await documentService.upload(file, user?.username ?? "user");
-    } catch {
-      setQueue((q) =>
-        q.map((i) => i.id === queueId ? { ...i, status: "error", progress: 0, stage: "Upload failed" } : i)
-      );
-      return;
-    }
+    // ============================================================
+    // PHASE 1 — UPLOAD FILE + CREATE DOCUMENT
+    // ============================================================
 
     setQueue((q) =>
       q.map((i) =>
-        i.id === queueId ? { ...i, progress: 30, stage: "Saved — starting extraction…", docId: doc.id } : i
+        i.id === queueId
+          ? {
+            ...i,
+            status: "uploading",
+            progress: 5,
+            stage: "Uploading…"
+          }
+          : i
       )
     );
 
-    // Phase 2 — extract
-    documentService.updateExtraction(doc.id, "extracting");
-    setQueue((q) =>
-      q.map((i) => i.id === queueId ? { ...i, status: "extracting", progress: 32 } : i)
-    );
+    let doc;
 
     try {
-      // Dynamic import keeps the extraction bundle client-side only
-      const { extractReceipt } = await import("@/services/extraction/document-extractor");
 
-      const result = await extractReceipt(file, ({ stage, detail, percent }) => {
-        const pct = 30 + Math.round(percent * 0.65); // map 0-100 → 30-95
-        setQueue((q) =>
-          q.map((i) =>
-            i.id === queueId
-              ? { ...i, progress: pct, stage: stageLabel(stage, detail) }
-              : i
-          )
-        );
-      });
+      // ==========================================================
+      // documentRepository.upload()
+      //
+      // 1. Uploads the actual file to Supabase Storage
+      // 2. Creates the documents row
+      // 3. Creates the document audit log
+      // ==========================================================
 
-      documentService.updateExtraction(doc.id, "ready_for_review", result);
+      doc = await documentRepository.upload(
+        file,
+        user?.id
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Upload failed:",
+        err
+      );
+
       setQueue((q) =>
         q.map((i) =>
           i.id === queueId
-            ? { ...i, status: "done", progress: 100, stage: "Ready for review" }
+            ? {
+              ...i,
+              status: "error",
+              progress: 0,
+              stage: "Upload failed"
+            }
             : i
         )
       );
-    } catch (err) {
-      // Extraction failed — document is still usable, user fills form manually
-      console.error("Extraction failed:", err);
-      documentService.updateExtraction(doc.id, "failed");
+
+      return;
+    }
+
+
+    // ============================================================
+    // DOCUMENT CREATED
+    // ============================================================
+
+    setQueue((q) =>
+      q.map((i) =>
+        i.id === queueId
+          ? {
+            ...i,
+            progress: 30,
+            stage: "Saved — starting extraction…",
+            docId: doc.id
+          }
+          : i
+      )
+    );
+
+
+    // ============================================================
+    // PHASE 2 — OCR / EXTRACTION
+    // ============================================================
+
+    setQueue((q) =>
+      q.map((i) =>
+        i.id === queueId
+          ? {
+            ...i,
+            status: "extracting",
+            progress: 32,
+            stage: "Extracting…"
+          }
+          : i
+      )
+    );
+
+
+    try {
+
+      // ==========================================================
+      // LOAD OCR MODULE
+      // ==========================================================
+
+      const {
+        extractReceipt
+      } = await import(
+        "@/services/extraction/document-extractor"
+      );
+
+
+      // ==========================================================
+      // RUN OCR
+      // ==========================================================
+
+      const result = await extractReceipt(
+        file,
+        ({ stage, detail, percent }) => {
+
+          const pct =
+            30 +
+            Math.round(percent * 0.65);
+
+
+          setQueue((q) =>
+            q.map((i) =>
+              i.id === queueId
+                ? {
+                  ...i,
+                  progress: pct,
+                  stage: stageLabel(
+                    stage,
+                    detail
+                  )
+                }
+                : i
+            )
+          );
+        }
+      );
+
+
+      // ==========================================================
+      // DETERMINE EXTRACTION METHOD
+      // ==========================================================
+
+      let method = "image_ocr";
+
+      if (file.type === "application/pdf") {
+
+        // If your extractor exposes whether the PDF
+        // was text-based or scanned, use that here.
+        //
+        // For now, assume scanned PDF OCR.
+
+        method = "scanned_pdf_ocr";
+      }
+
+
+      // ==========================================================
+      // NORMALIZE OCR RESULT
+      //
+      // Your table expects:
+      //
+      // fields              JSONB NOT NULL
+      // validation_issues   JSONB NOT NULL
+      // full_text           TEXT
+      // confidence         NUMERIC
+      // duration_ms         INTEGER
+      // is_current          BOOLEAN
+      // spam                BOOLEAN
+      // ==========================================================
+
+      // ============================================================
+      // PHASE 3 — CREATE DOCUMENT EXTRACTION
+      // ============================================================
+
+      const extraction = await documentExtractionRepository.create({
+        document_id: doc.id,
+        method: result.method,
+        fields: result.fields,
+        validation_issues: result.validationIssues ?? [],
+        full_text: result.fullText ?? null,
+        confidence: null,
+        duration_ms: null,
+        is_current: true,
+        spam: false
+      });
+
+
+      // ============================================================
+      // AUDIT LOG — DOCUMENT EXTRACTION
+      //
+      // document_extractions has no id column.
+      //
+      // Therefore the document UUID is used as the audit
+      // entity_id for the extraction event.
+      // ============================================================
+
+      const currentUser =
+        userRepository.getLoggedInUser();
+
+
+      if (currentUser) {
+
+        await auditRepository.create({
+
+          actor_id:
+            currentUser.id,
+
+          action:
+            "create",
+
+          entity_type:
+            "document_extraction",
+
+          entity_id:
+            doc.id,
+
+          before:
+            null,
+
+          after:
+            extraction,
+
+          ip_address:
+            null,
+
+          user_agent:
+            navigator.userAgent
+        });
+      }
+
+
+      // ============================================================
+      // FINISHED
+      //
+      // DO NOT CREATE EXPENSE HERE.
+      //
+      // Expense is created only after user review/approval.
+      // ============================================================
+
       setQueue((q) =>
         q.map((i) =>
           i.id === queueId
-            ? { ...i, status: "extraction_failed", progress: 100, stage: "Extraction failed — fill manually" }
+            ? {
+              ...i,
+              status: "done",
+              progress: 100,
+              stage: "Ready for review"
+            }
+            : i
+        )
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Extraction failed:",
+        err
+      );
+
+
+      // ============================================================
+      // OCR FAILED
+      //
+      // The document remains in documents.
+      //
+      // No document_extractions row is created because
+      // you specified that extraction should only be recorded
+      // when OCR actually happens successfully.
+      // ============================================================
+
+      setQueue((q) =>
+        q.map((i) =>
+          i.id === queueId
+            ? {
+              ...i,
+              status: "extraction_failed",
+              progress: 100,
+              stage:
+                "Extraction failed — fill manually"
+            }
             : i
         )
       );
     }
+
   }, [user]);
+
 
   const addFiles = useCallback(
     async (files) => {
+
+      // ============================================================
+      // VALIDATE FILES
+      // ============================================================
+
       const valid = files.filter((f) => {
+
         if (f.size > MAX_SIZE) {
-          toast.error(`${f.name} is too large (max ${formatFileSize(MAX_SIZE)})`);
+
+          toast.error(
+            `${f.name} is too large (max ${formatFileSize(MAX_SIZE)})`
+          );
+
           return false;
         }
+
         return true;
       });
-      if (valid.length === 0) return;
+
+
+      if (valid.length === 0) {
+        return;
+      }
+
+
+      // ============================================================
+      // CREATE QUEUE ITEMS
+      // ============================================================
 
       const newItems = valid.map((f) => {
-        const id = Math.random().toString(36).substring(2);
-        const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : null;
-        return { id, file: f, preview, status: "pending", progress: 0, stage: "Pending…", docId: null };
+
+        const id =
+          Math.random()
+            .toString(36)
+            .substring(2);
+
+
+        const preview =
+          f.type.startsWith("image/")
+            ? URL.createObjectURL(f)
+            : null;
+
+
+        return {
+          id,
+          file: f,
+          preview,
+          status: "pending",
+          progress: 0,
+          stage: "Pending…",
+          docId: null
+        };
       });
 
-      setQueue((q) => [...q, ...newItems]);
+
+      // ============================================================
+      // ADD TO QUEUE
+      // ============================================================
+
+      setQueue((q) => [
+        ...q,
+        ...newItems
+      ]);
+
+
+      // ============================================================
+      // PROCESS FILES SEQUENTIALLY
+      // ============================================================
 
       for (const item of newItems) {
-        await processFile(item.file, item.id);
+
+        await processFile(
+          item.file,
+          item.id
+        );
       }
+
     },
     [processFile]
   );
@@ -172,8 +458,8 @@ export default function UploadPage() {
             isDragActive && !isDragReject
               ? "border-primary bg-primary/5"
               : isDragReject
-              ? "border-destructive bg-destructive/5"
-              : "border-border hover:border-primary/50 hover:bg-muted/50"
+                ? "border-destructive bg-destructive/5"
+                : "border-border hover:border-primary/50 hover:bg-muted/50"
           )}
         >
           <input {...getInputProps()} />
