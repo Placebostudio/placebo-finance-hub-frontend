@@ -19,6 +19,11 @@ import { APP_CONFIG } from "@/config";
 import { formatCurrency, formatDate, buildPeriod, periodLabel } from "@/lib/utils";
 import { toast } from "sonner";
 
+import { expenseRepository } from "@/services/backend-expenses";
+import { auditRepository } from "@/services/backend-audits";
+import { categoryRepository } from "@/services/backend-categories";
+import { currencyRepository } from "@/services/backend-currencies";
+
 const STATUS_VARIANTS = { approved: "success", draft: "secondary", rejected: "destructive" };
 const METHOD_ICONS = { credit_card: CreditCard, bank_transfer: Landmark, cash: Banknote };
 
@@ -35,8 +40,26 @@ export default function ExpensesPage() {
   const [fxLoading, setFxLoading] = useState(false);
   const [fxError, setFxError] = useState(false);
 
-  function load() { setExpenses(expenseService.getAll()); }
+  async function load() {
+    const expenses = await expenseRepository.getAll();
+    const categories = await categoryRepository.getAll();
+
+    const expensesWithCategories = expenses.map((expense) => {
+      const category = categories.find(
+        (c) => c.id === expense.category_id
+      );
+
+      return {
+        ...expense,
+        category: category?.name ?? "Uncategorized",
+      };
+    });
+
+    setExpenses(expensesWithCategories);
+  }
   useEffect(() => { load(); }, []);
+
+  console.log(expenses)
 
   // Fetch FX rates on mount
   useEffect(() => {
@@ -58,7 +81,7 @@ export default function ExpensesPage() {
   }
 
   const periodExpenses = expenses.filter(
-    (e) => e.documentDate && e.documentDate.startsWith(period)
+    (e) => e.document_date && e.document_date.startsWith(period)
   );
 
   const filtered = periodExpenses.filter((e) => {
@@ -78,8 +101,8 @@ export default function ExpensesPage() {
   const currencyBreakdown = approvedExpenses.reduce((acc, e) => {
     const cur = e.currency ?? "ILS";
     if (!acc[cur]) acc[cur] = { gross: 0, vat: 0 };
-    acc[cur].gross += e.grossAmount ?? 0;
-    acc[cur].vat   += e.vatAmount  ?? 0;
+    acc[cur].gross += e.gross_amount ?? 0;
+    acc[cur].vat += e.vat_amount ?? 0;
     return acc;
   }, {});
 
@@ -92,13 +115,13 @@ export default function ExpensesPage() {
 
   if (!fxError) {
     for (const e of approvedExpenses) {
-      const gross = e.grossAmount ?? 0;
-      const vat   = e.vatAmount   ?? 0;
-      const cur   = e.currency    ?? "ILS";
+      const gross = e.gross_amount ?? 0;
+      const vat = e.vat_amount ?? 0;
+      const cur = e.currency ?? "ILS";
 
       if (cur === displayCurrency) {
         convertedTotal += gross;
-        convertedVat   += vat;
+        convertedVat += vat;
       } else {
         const convertedGross = convertCurrency(gross, cur, displayCurrency, fxData);
         const convertedVatAmt = convertCurrency(vat, cur, displayCurrency, fxData);
@@ -106,43 +129,64 @@ export default function ExpensesPage() {
           conversionIncomplete = true;
         } else {
           convertedTotal += convertedGross;
-          convertedVat   += convertedVatAmt;
+          convertedVat += convertedVatAmt;
         }
       }
     }
   }
 
-  function handleDelete(id) {
+  async function handleDelete(id) {
     if (!confirm("Delete this expense?")) return;
-    const exp = expenseService.getById(id);
-    if (currentUser?.role === "owner") {
-      expenseService.hardDelete(id);
-      auditService.log({
-        actorId: currentUser.id,
-        actorName: currentUser.fullName,
-        action: "delete",
-        entityType: "expense",
-        entityId: id,
-        entityName: exp?.vendorName || exp?.documentNumber || id,
-        before: exp,
-        after: null,
-      });
-      toast.success("Expense permanently deleted");
-    } else {
-      expenseService.softDelete(id, currentUser?.id, currentUser?.fullName);
-      auditService.log({
-        actorId: currentUser?.id,
-        actorName: currentUser?.fullName,
-        action: "soft_delete_requested",
-        entityType: "expense",
-        entityId: id,
-        entityName: exp?.vendorName || exp?.documentNumber || id,
-        before: exp,
-        after: null,
-      });
-      toast.success("Expense deleted");
+
+    try {
+      const exp = await expenseRepository.getById(id);
+
+      if (!exp) {
+        toast.error("Expense not found");
+        return;
+      }
+
+      if (currentUser?.role === "owner") {
+        // Hard delete
+        await expenseRepository.delete(id);
+
+        await auditRepository.create({
+          actor_id: currentUser.id,
+          action: "delete",
+          entity_type: "expense",
+          entity_id: id,
+          details: {
+            before: exp,
+            after: null,
+          },
+        });
+
+        toast.success("Expense permanently deleted");
+      } else {
+        // Soft delete = just update spam
+        const updatedExpense = await expenseRepository.update(id, {
+          spam: true,
+        });
+
+        await auditRepository.create({
+          actor_id: currentUser?.id,
+          action: "soft_delete",
+          entity_type: "expense",
+          entity_id: id,
+          details: {
+            before: exp,
+            after: updatedExpense,
+          },
+        });
+
+        toast.success("Expense deleted");
+      }
+
+      load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to delete expense");
     }
-    load();
   }
 
   return (
@@ -268,34 +312,34 @@ export default function ExpensesPage() {
                   </TableHeader>
                   <TableBody>
                     {filtered.map((exp) => {
-                      const Icon = METHOD_ICONS[exp.paymentMethod] ?? null;
+                      const Icon = METHOD_ICONS[exp.payment_method] ?? null;
                       return (
                         <TableRow key={exp.id}>
                           <TableCell className="font-medium max-w-[120px] sm:max-w-[140px]">
-                            <p className="truncate">{exp.vendorName || "—"}</p>
-                            {exp.documentNumber && (
-                              <p className="text-xs text-muted-foreground truncate">{exp.documentNumber}</p>
+                            <p className="truncate">{exp.vendor_name || "—"}</p>
+                            {exp.document_number && (
+                              <p className="text-xs text-muted-foreground truncate">{exp.document_number}</p>
                             )}
                           </TableCell>
-                          <TableCell className="text-sm whitespace-nowrap">{formatDate(exp.documentDate)}</TableCell>
-                          <TableCell className="text-sm hidden sm:table-cell">{exp.documentType}</TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">{formatDate(exp.document_date)}</TableCell>
+                          <TableCell className="text-sm hidden sm:table-cell">{exp.document_type}</TableCell>
                           <TableCell className="text-sm max-w-[120px] hidden md:table-cell">
                             <span className="truncate block">{exp.category || "—"}</span>
                           </TableCell>
                           <TableCell className="hidden sm:table-cell">
                             <div className="flex items-center gap-1 text-sm">
                               {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
-                              <span className="text-xs">{exp.paymentMethod.replace("_", " ")}</span>
+                              <span className="text-xs">{exp.payment_method.replace("_", " ")}</span>
                             </div>
                           </TableCell>
                           <TableCell className="text-right text-sm font-mono">
-                            {exp.netAmount != null ? formatCurrency(exp.netAmount, exp.currency) : "—"}
+                            {exp.net_amount != null ? formatCurrency(exp.net_amount, exp.currency) : "—"}
                           </TableCell>
                           <TableCell className="text-right text-sm font-mono text-muted-foreground hidden sm:table-cell">
-                            {exp.vatRate != null && exp.vatRate > 0 ? `${exp.vatRate}%` : "—"}
+                            {exp.vat_rate != null && exp.vatRate > 0 ? `${exp.vat_rate}%` : "—"}
                           </TableCell>
                           <TableCell className="text-right text-sm font-mono font-semibold">
-                            {exp.grossAmount != null ? formatCurrency(exp.grossAmount, exp.currency) : "—"}
+                            {exp.gross_amount != null ? formatCurrency(exp.gross_amount, exp.currency) : "—"}
                           </TableCell>
                           <TableCell>
                             <Badge variant={STATUS_VARIANTS[exp.status] ?? "outline"} className="text-xs">

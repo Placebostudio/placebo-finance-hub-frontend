@@ -45,17 +45,27 @@ export default function DashboardPage() {
         const [
           documents,
           pendingReview,
-          expenses,
+          rawExpenses,
           transactions,
-        ] = await Promise.all([
-          documentRepository.getAll(),
-          documentRepository.getAll({
-            status: "pending_review",
-          }),
-          expenseRepository.getAll(),
-          transactionRepository.getAll(),
-        ]);
+        ] = await Promise.all([documentRepository.getAll(), documentRepository.getAll({ status: "pending_review", }), expenseRepository.getAll(), transactionRepository.getAll(),]);
 
+
+        const expenses = rawExpenses.map((e) => ({
+          ...e,
+
+          vendorName: e.vendor_name,
+          documentDate: e.document_date,
+          documentNumber: e.document_number,
+
+          grossAmount: e.gross_amount,
+          netAmount: e.net_amount,
+          vatAmount: e.vat_amount,
+          vatRate: e.vat_rate,
+
+          paymentMethod: e.payment_method,
+
+          category: e.category?.name ?? e.category ?? null,
+        }));
         // Reconciliation is frontend-only.
         const matches =
           reconciliationService.getConfirmed();
@@ -66,7 +76,7 @@ export default function DashboardPage() {
         const ccExpenses = expenses.filter(
           (e) =>
             e.status === "approved" &&
-            (e.paymentMethod ?? e.payment_method) ===
+            (e.payment_method ?? e.payment_method) ===
             "credit_card"
         );
 
