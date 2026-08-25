@@ -163,12 +163,12 @@ export default function UploadPage() {
         }
       />
 
-      <div className="flex-1 p-6 space-y-6 overflow-auto max-w-2xl">
+      <div className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto max-w-2xl">
         {/* Drop zone */}
         <div
           {...getRootProps()}
           className={cn(
-            "flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all",
+            "flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 sm:p-12 text-center cursor-pointer transition-all",
             isDragActive && !isDragReject
               ? "border-primary bg-primary/5"
               : isDragReject

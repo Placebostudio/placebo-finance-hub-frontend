@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Receipt, Search, Trash2, CreditCard, Landmark, Banknote } from "lucide-react";
+import { Receipt, Search, Trash2, CreditCard, Landmark, Banknote, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,8 +12,10 @@ import { PageHeader } from "@/components/layout/page-header";
 import { PeriodSelector } from "@/components/layout/period-selector";
 import { expenseService } from "@/services/expense.service";
 import { auditService } from "@/services/audit.service";
+import { fetchFxRates, convertCurrency } from "@/services/fx.service";
 import { usePeriodStore } from "@/store/period";
 import { useAuthStore } from "@/store/auth";
+import { APP_CONFIG } from "@/config";
 import { formatCurrency, formatDate, buildPeriod, periodLabel } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -28,9 +30,26 @@ export default function ExpensesPage() {
   const [expenses, setExpenses] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [displayCurrency, setDisplayCurrency] = useState("ILS");
+  const [fxData, setFxData] = useState(null);
+  const [fxLoading, setFxLoading] = useState(false);
+  const [fxError, setFxError] = useState(false);
 
   function load() { setExpenses(expenseService.getAll()); }
   useEffect(() => { load(); }, []);
+
+  // Fetch FX rates on mount
+  useEffect(() => {
+    setFxLoading(true);
+    setFxError(false);
+    fetchFxRates()
+      .then((data) => {
+        setFxData(data);
+        if (!data) setFxError(true);
+      })
+      .catch(() => setFxError(true))
+      .finally(() => setFxLoading(false));
+  }, []);
 
   function handlePeriodChange(m, y) {
     setPeriod(m, y);
@@ -51,13 +70,47 @@ export default function ExpensesPage() {
     return matchSearch && matchStatus;
   });
 
-  const totals = filtered.reduce((acc, e) => {
-    if (e.status === "approved") {
-      acc.gross += e.grossAmount ?? 0;
-      acc.vat += e.vatAmount ?? 0;
-    }
+  // ── Multi-currency totals ─────────────────────────────────────────────────
+  // 1. Compute approved expenses only
+  const approvedExpenses = filtered.filter((e) => e.status === "approved");
+
+  // 2. Per-currency breakdown (original amounts)
+  const currencyBreakdown = approvedExpenses.reduce((acc, e) => {
+    const cur = e.currency ?? "ILS";
+    if (!acc[cur]) acc[cur] = { gross: 0, vat: 0 };
+    acc[cur].gross += e.grossAmount ?? 0;
+    acc[cur].vat   += e.vatAmount  ?? 0;
     return acc;
-  }, { gross: 0, vat: 0 });
+  }, {});
+
+  // 3. Converted total in display currency
+  // null = incomplete (some expenses couldn't be converted)
+  let convertedTotal = 0;
+  let convertedVat = 0;
+  let conversionIncomplete = false;
+  let conversionUnavailable = fxError;
+
+  if (!fxError) {
+    for (const e of approvedExpenses) {
+      const gross = e.grossAmount ?? 0;
+      const vat   = e.vatAmount   ?? 0;
+      const cur   = e.currency    ?? "ILS";
+
+      if (cur === displayCurrency) {
+        convertedTotal += gross;
+        convertedVat   += vat;
+      } else {
+        const convertedGross = convertCurrency(gross, cur, displayCurrency, fxData);
+        const convertedVatAmt = convertCurrency(vat, cur, displayCurrency, fxData);
+        if (convertedGross == null || convertedVatAmt == null) {
+          conversionIncomplete = true;
+        } else {
+          convertedTotal += convertedGross;
+          convertedVat   += convertedVatAmt;
+        }
+      }
+    }
+  }
 
   function handleDelete(id) {
     if (!confirm("Delete this expense?")) return;
@@ -104,16 +157,16 @@ export default function ExpensesPage() {
         }
       />
 
-      <div className="flex-1 p-6 space-y-4 overflow-auto">
+      <div className="flex-1 p-4 sm:p-6 space-y-4 overflow-auto">
 
         {/* Period selector bar */}
         <div className="flex items-center gap-4 flex-wrap rounded-lg border bg-muted/30 px-4 py-2.5">
           <PeriodSelector month={month} year={year} onChange={handlePeriodChange} label="Expenses Period" />
         </div>
 
-        {/* Filters */}
-        <div className="flex gap-3 items-center">
-          <div className="relative flex-1 max-w-xs">
+        {/* Filters + Display Currency */}
+        <div className="flex gap-3 items-center flex-wrap">
+          <div className="relative flex-1 min-w-40 max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search vendor, invoice..."
@@ -133,6 +186,19 @@ export default function ExpensesPage() {
               <SelectItem value="rejected">Rejected</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">Display currency:</span>
+            <Select value={displayCurrency} onValueChange={setDisplayCurrency}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {APP_CONFIG.supportedCurrencies.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -142,27 +208,59 @@ export default function ExpensesPage() {
           </div>
         ) : (
           <>
-            {/* Summary */}
-            {totals.gross > 0 && (
-              <div className="flex gap-4 text-sm">
-                <span className="text-muted-foreground">Approved total:</span>
-                <span className="font-semibold">{formatCurrency(totals.gross, "ILS")}</span>
-                <span className="text-muted-foreground">incl. VAT {formatCurrency(totals.vat, "ILS")}</span>
+            {/* Approved totals summary */}
+            {approvedExpenses.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-2">
+                {/* Converted total */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-sm text-muted-foreground">Approved total ({displayCurrency}):</span>
+                  {conversionUnavailable ? (
+                    <span className="flex items-center gap-1 text-sm text-amber-600">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      FX rates unavailable — totals not converted
+                    </span>
+                  ) : fxLoading ? (
+                    <span className="text-sm text-muted-foreground">Loading rates…</span>
+                  ) : conversionIncomplete ? (
+                    <span className="flex items-center gap-1 text-sm text-amber-600">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {formatCurrency(convertedTotal, displayCurrency)}
+                      <span className="text-xs ml-1">(partial — some rates unavailable)</span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="font-semibold">{formatCurrency(convertedTotal, displayCurrency)}</span>
+                      <span className="text-muted-foreground text-sm">incl. VAT {formatCurrency(convertedVat, displayCurrency)}</span>
+                    </>
+                  )}
+                </div>
+                {/* Original-currency breakdown */}
+                {Object.keys(currencyBreakdown).length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-muted-foreground">Original:</span>
+                    {Object.entries(currencyBreakdown).map(([cur, t], i) => (
+                      <span key={cur} className="text-xs text-muted-foreground">
+                        {i > 0 && <span className="mx-1 text-border">·</span>}
+                        <span className="font-mono font-medium text-foreground">{cur} {t.gross.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             <Card>
-              <CardContent className="p-0">
+              <CardContent className="p-0 overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Vendor</TableHead>
                       <TableHead>Date</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Payment</TableHead>
+                      <TableHead className="hidden sm:table-cell">Type</TableHead>
+                      <TableHead className="hidden md:table-cell">Category</TableHead>
+                      <TableHead className="hidden sm:table-cell">Payment</TableHead>
                       <TableHead className="text-right">Net</TableHead>
-                      <TableHead className="text-right">VAT</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">VAT</TableHead>
                       <TableHead className="text-right">Gross</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead />
@@ -173,31 +271,31 @@ export default function ExpensesPage() {
                       const Icon = METHOD_ICONS[exp.paymentMethod] ?? null;
                       return (
                         <TableRow key={exp.id}>
-                          <TableCell className="font-medium max-w-[140px]">
+                          <TableCell className="font-medium max-w-[120px] sm:max-w-[140px]">
                             <p className="truncate">{exp.vendorName || "—"}</p>
                             {exp.documentNumber && (
                               <p className="text-xs text-muted-foreground truncate">{exp.documentNumber}</p>
                             )}
                           </TableCell>
                           <TableCell className="text-sm whitespace-nowrap">{formatDate(exp.documentDate)}</TableCell>
-                          <TableCell className="text-sm">{exp.documentType}</TableCell>
-                          <TableCell className="text-sm max-w-[120px]">
+                          <TableCell className="text-sm hidden sm:table-cell">{exp.documentType}</TableCell>
+                          <TableCell className="text-sm max-w-[120px] hidden md:table-cell">
                             <span className="truncate block">{exp.category || "—"}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden sm:table-cell">
                             <div className="flex items-center gap-1 text-sm">
                               {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
                               <span className="text-xs">{exp.paymentMethod.replace("_", " ")}</span>
                             </div>
                           </TableCell>
                           <TableCell className="text-right text-sm font-mono">
-                            {formatCurrency(exp.netAmount ?? 0, exp.currency)}
+                            {exp.netAmount != null ? formatCurrency(exp.netAmount, exp.currency) : "—"}
                           </TableCell>
-                          <TableCell className="text-right text-sm font-mono text-muted-foreground">
-                            {exp.vatRate > 0 ? `${exp.vatRate}%` : "—"}
+                          <TableCell className="text-right text-sm font-mono text-muted-foreground hidden sm:table-cell">
+                            {exp.vatRate != null && exp.vatRate > 0 ? `${exp.vatRate}%` : "—"}
                           </TableCell>
                           <TableCell className="text-right text-sm font-mono font-semibold">
-                            {formatCurrency(exp.grossAmount ?? 0, exp.currency)}
+                            {exp.grossAmount != null ? formatCurrency(exp.grossAmount, exp.currency) : "—"}
                           </TableCell>
                           <TableCell>
                             <Badge variant={STATUS_VARIANTS[exp.status] ?? "outline"} className="text-xs">

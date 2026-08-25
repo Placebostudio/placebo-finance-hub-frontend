@@ -158,6 +158,28 @@ function parseDate(str) {
   return null;
 }
 
+// ── Date extraction from a line ───────────────────────────────────────────────
+/**
+ * Extract all recognisable dates from a single text line.
+ * Returns an array of YYYY-MM-DD strings (deduped, in order of appearance).
+ */
+function extractDates(line) {
+  const found = [];
+  const seen = new Set();
+  for (const re of DATE_RE) {
+    const cloned = new RegExp(re.source, re.flags);
+    let m;
+    while ((m = cloned.exec(line)) !== null) {
+      const raw = m[1];
+      if (seen.has(raw)) continue;
+      seen.add(raw);
+      const parsed = parseDate(raw);
+      if (parsed) found.push(parsed);
+    }
+  }
+  return found;
+}
+
 // ── Amount helpers ────────────────────────────────────────────────────────────
 function parseAmount(raw) {
   let s = String(raw).replace(/[₪$€£¥\s]/g, '').trim();

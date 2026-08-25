@@ -4,7 +4,7 @@ export const APP_CONFIG = {
   version: "2.0.0",
   defaultCurrency: "ILS",
   supportedCurrencies: [
-    "ILS", "EUR", "USD", "GBP", "CHF",
+    "ILS", "EUR", "USD", "GBP", "CHF", "SEK",
   ],
   maxFileSize: 10 * 1024 * 1024, // 10MB
   acceptedDocumentTypes: ["image/jpeg", "image/png", "image/webp", "application/pdf"],

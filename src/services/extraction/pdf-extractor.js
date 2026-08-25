@@ -53,6 +53,14 @@ if (
     };
   };
 }
+if (typeof Map !== 'undefined' && typeof Map.prototype.getOrInsertComputed !== 'function') {
+  Map.prototype.getOrInsertComputed = function (key, callbackfn) {
+    if (this.has(key)) return this.get(key);
+    var value = callbackfn(key);
+    this.set(key, value);
+    return value;
+  };
+}
 `.trim();
 
 /** Apply both polyfills in the current (main) thread. */
@@ -81,6 +89,17 @@ function applyMainThreadPolyfills() {
         },
         [Symbol.asyncIterator]() { return this; },
       };
+    };
+  }
+
+  // pdfjs-dist 6.x uses Map.prototype.getOrInsertComputed (ECMAScript 2025).
+  // Polyfill for browsers without it (Firefox, Safari, Chrome < 131, etc.)
+  if (typeof Map !== 'undefined' && typeof Map.prototype.getOrInsertComputed !== 'function') {
+    Map.prototype.getOrInsertComputed = function (key, callbackfn) {
+      if (this.has(key)) return this.get(key);
+      const value = callbackfn(key);
+      this.set(key, value);
+      return value;
     };
   }
 }
