@@ -26,6 +26,9 @@ import Link from "next/link";
 import { documentRepository } from "@/services/backend-documents";
 import { documentExtractionRepository } from "@/services/backend-document_extractions";
 import { expenseRepository } from "@/services/backend-expenses";
+import { categoryRepository } from "@/services/backend-categories";
+import { currencyRepository } from "@/services/backend-currencies";
+import { auditRepository } from "@/services/backend-audits";
 
 // Reverse lookup: lowercase country name → ISO code
 // e.g. "israel" → "IL", "germany" → "DE"
@@ -50,7 +53,7 @@ const EMPTY_FORM = {
   vatRate: "",
   netAmount: "",
   vatAmount: "",
-  category: "",
+  category_id: "",
   paymentMethod: "unknown",
   notes: "",
 };
@@ -70,6 +73,29 @@ const METHOD_LABELS = {
   scanned_pdf_ocr: "Scanned PDF (OCR)",
   manual: "Manual entry",
 };
+
+function formatDateForInput(value) {
+  if (!value) return "";
+
+  // Already in yyyy-MM-dd format
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toISOString().split("T")[0];
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+
+  return String(value).split("T")[0];
+}
 
 function FieldStatusBadge({ status }) {
   if (!status || status === "missing") return null;
@@ -99,28 +125,95 @@ function Field({ label, fieldKey, extractedField, children }) {
 }
 
 /** Build initial form values from extraction result fields */
-function formFromExtraction(fields) {
+function formFromExtraction(fields, categories = []) {
   if (!fields) return EMPTY_FORM;
+
   const f = fields;
+
+  const country =
+    f.country?.countryName ??
+    f.country?.value ??
+    "";
+
+  const countryCode =
+    f.country?.value ??
+    countryNameToCode(country);
+
+  const extractedVatRate =
+    f.vatRate?.value != null &&
+      f.vatRate.status !== "missing"
+      ? f.vatRate.value
+      : null;
+
+  const countryVatRate =
+    countryCode
+      ? getCountryVatRate(countryCode)
+      : null;
+
+  // Priority:
+  // 1. VAT rate extracted from document
+  // 2. Default VAT rate for detected country
+  // 3. Empty
+  console.log("Country:", country);
+  console.log("Country code:", countryCode);
+  console.log("Extracted VAT:", extractedVatRate);
+  console.log("Country VAT:", countryVatRate);
+
+  const vatRate =
+    extractedVatRate != null
+      ? String(extractedVatRate)
+      : countryVatRate != null
+        ? String(countryVatRate)
+        : "";
+
+  const defaultCategoryId =
+    categories.find(
+      (category) => category.name === "Other"
+    )?.id ?? "";
+
   return {
     vendorName: f.vendorName?.value ?? "",
-    documentType: f.documentType?.value ?? "receipt",
-    documentNumber: f.documentNumber?.value ?? "",
-    documentDate: f.documentDate?.value ?? "",
-    dueDate: f.dueDate?.value ?? "",
-    currency: f.currency?.value ?? "ILS",
-    // Country: use human-readable name if available
-    country: f.country?.countryName ?? f.country?.value ?? "",
-    // Gross is Total Paid — the primary amount
-    grossAmount: f.grossAmount?.value != null ? String(f.grossAmount.value) : "",
-    // vatRate: only set when actually found or derived from country (not null/missing)
-    vatRate: f.vatRate?.value != null && f.vatRate.status !== "missing"
-      ? String(f.vatRate.value)
-      : "",
-    netAmount: f.netAmount?.value != null ? String(f.netAmount.value) : "",
-    vatAmount: f.vatAmount?.value != null ? String(f.vatAmount.value) : "",
-    category: "",
+
+    documentType:
+      f.documentType?.value ?? "receipt",
+
+    documentNumber:
+      f.documentNumber?.value ?? "",
+
+    documentDate:
+      toDateInputValue(f.documentDate?.value),
+
+    dueDate:
+      toDateInputValue(f.dueDate?.value),
+
+    currency:
+      f.currency?.value ?? "ILS",
+
+    country,
+
+    grossAmount:
+      f.grossAmount?.value != null
+        ? String(f.grossAmount.value)
+        : "",
+
+    // Extracted VAT rate first, otherwise country default
+    vatRate,
+
+    netAmount:
+      f.netAmount?.value != null
+        ? String(f.netAmount.value)
+        : "",
+
+    vatAmount:
+      f.vatAmount?.value != null
+        ? String(f.vatAmount.value)
+        : "",
+
+    // Actual category FK used by expenses
+    category_id: defaultCategoryId,
+
     paymentMethod: "unknown",
+
     notes: "",
   };
 }
@@ -135,6 +228,10 @@ export default function ReviewPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
+  const [fxRateToSek, setFxRateToSek] = useState(1);
+
   // Track whether the user has explicitly typed a VAT rate so we don't overwrite it
   const vatManuallySet = useRef(false);
   // Track whether the country was just set from extraction (not a user change)
@@ -144,7 +241,11 @@ export default function ReviewPage() {
     async function fetchData() {
       if (!id) return;
 
-      const d = await documentRepository.getById(id);
+      const [d, categoryData, existingExpense] = await Promise.all([
+        documentRepository.getById(id),
+        categoryRepository.getAll({ is_active: true }),
+        expenseRepository.getByDocumentId(id),
+      ]);
 
       if (!d) {
         setNotFound(true);
@@ -152,16 +253,76 @@ export default function ReviewPage() {
       }
 
       setDoc(d);
+      setCategories(categoryData);
+
+      const currencies = await currencyRepository.getAll();
+      console.log(currencies);
+      setCurrencies(currencies);
 
       const extraction =
         await documentExtractionRepository.getById(id);
 
-      if (extraction?.fields) {
+      // ============================================================
+      // LOAD EXISTING EXPENSE IF ONE ALREADY EXISTS
+      // ============================================================
+
+      if (existingExpense) {
+        countryFromExtraction.current = false;
+
+        setForm({
+          vendorName: existingExpense.vendor_name ?? "",
+          documentType: existingExpense.document_type ?? "receipt",
+          documentNumber: existingExpense.document_number ?? "",
+          documentDate: existingExpense.document_date ?? "",
+          dueDate: existingExpense.due_date ?? "",
+
+          currency: existingExpense.currency ?? "ILS",
+
+          country:
+            existingExpense.country_code ?? "",
+
+          grossAmount:
+            existingExpense.gross_amount != null
+              ? String(existingExpense.gross_amount)
+              : "",
+
+          netAmount:
+            existingExpense.net_amount != null
+              ? String(existingExpense.net_amount)
+              : "",
+
+          vatAmount:
+            existingExpense.vat_amount != null
+              ? String(existingExpense.vat_amount)
+              : "",
+
+          vatRate:
+            existingExpense.vat_rate != null
+              ? String(existingExpense.vat_rate)
+              : "",
+
+          category_id:
+            existingExpense.category_id ?? "",
+
+          paymentMethod:
+            existingExpense.payment_method ?? "unknown",
+
+          notes:
+            existingExpense.notes ?? "",
+        });
+      }
+
+      // ============================================================
+      // NO EXPENSE YET → LOAD FROM EXTRACTION
+      // ============================================================
+
+      else if (extraction?.fields) {
         countryFromExtraction.current = true;
 
         setForm(
           formFromExtraction(
-            extraction.fields
+            extraction.fields,
+            categoryData
           )
         );
       }
@@ -206,7 +367,35 @@ export default function ReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.country]);
 
+  useEffect(() => {
+    if (!form.currency || !currencies?.length) return;
+
+    const selectedCurrency = currencies.find(
+      (currency) => currency.quote === form.currency
+    );
+
+    const sekCurrency = currencies.find(
+      (currency) => currency.quote === "SEK"
+    );
+
+    if (!selectedCurrency || !sekCurrency) {
+      setFxRateToSek(null);
+      return;
+    }
+
+    if (form.currency === "SEK") {
+      setFxRateToSek(1);
+      return;
+    }
+
+    const rateToSek =
+      sekCurrency.rate / selectedCurrency.rate;
+
+    setFxRateToSek(rateToSek);
+  }, [form.currency, currencies]);
+
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
 
   /**
    * Recalculate net amount and VAT amount from gross + VAT rate.
@@ -225,96 +414,121 @@ export default function ReviewPage() {
     }));
   }, []);
 
+  if (!currencies || currencies.length === 0) {
+    return;
+  }
+
+  const selectedCurrency = currencies.find(
+    (c) => c.quote === form.currency
+  );
+
+  const sekCurrency = currencies.find(
+    (c) => c.quote === "SEK"
+  );
+
+  if (!selectedCurrency) {
+    throw new Error(`Currency ${form.currency} not found`);
+  }
+
+  if (!sekCurrency) {
+    throw new Error("SEK exchange rate not found");
+  }
+
+
   const save = async (status) => {
     setSaving(true);
+    console.log(form);
+
     try {
-      await documentExtractionRepository.update(id, {
-        fields: {
-          vendorName: {
-            ...extraction.fields.vendorName,
-            value: form.vendorName,
-          },
-          documentType: {
-            ...extraction.fields.documentType,
-            value: form.documentType,
-          },
-          documentNumber: {
-            ...extraction.fields.documentNumber,
-            value: form.documentNumber,
-          },
-          documentDate: {
-            ...extraction.fields.documentDate,
-            value: form.documentDate,
-          },
-          dueDate: {
-            ...extraction.fields.dueDate,
-            value: form.dueDate,
-          },
-          currency: {
-            ...extraction.fields.currency,
-            value: form.currency,
-          },
-          country: {
-            ...extraction.fields.country,
-            value: form.country,
-            countryName: form.country,
-          },
-          grossAmount: {
-            ...extraction.fields.grossAmount,
-            value: form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
-          },
-          vatRate: {
-            ...extraction.fields.vatRate,
-            value: form.vatRate !== "" ? parseFloat(form.vatRate) : null,
-          },
-          netAmount: {
-            ...extraction.fields.netAmount,
-            value: form.netAmount !== "" ? parseFloat(form.netAmount) : null,
-          },
-          vatAmount: {
-            ...extraction.fields.vatAmount,
-            value: form.vatAmount !== "" ? parseFloat(form.vatAmount) : null,
-          },
+      const expenseData = {
+        document_id: id,
+
+        vendor_name: form.vendorName,
+
+        document_type: form.documentType,
+        document_number: form.documentNumber || null,
+        document_date: form.documentDate,
+        due_date: form.dueDate || null,
+
+        currency: form.currency,
+        country_code: countryNameToCode(form.country),
+
+        net_amount:
+          form.netAmount !== ""
+            ? parseFloat(form.netAmount)
+            : null,
+
+        vat_amount:
+          form.vatAmount !== ""
+            ? parseFloat(form.vatAmount)
+            : null,
+
+        vat_rate:
+          form.vatRate !== ""
+            ? parseFloat(form.vatRate)
+            : null,
+
+        gross_amount:
+          form.grossAmount !== ""
+            ? parseFloat(form.grossAmount)
+            : null,
+
+        category_id: form.category_id,
+
+        payment_method: form.paymentMethod,
+
+        notes: form.notes || null,
+
+        status,
+      };
+
+      // Check if an expense already exists for this document
+      const existingExpense =
+        await expenseRepository.getByDocumentId(id);
+
+      let expense;
+
+      if (existingExpense) {
+        // Existing expense → update it
+        expense = await expenseRepository.update(
+          existingExpense.id,
+          expenseData
+        );
+      } else {
+        // No expense yet → create it
+        expense = await expenseRepository.create(expenseData);
+      }
+
+      // Audit the expense operation
+      await auditRepository.create({
+        action: existingExpense ? "update" : "create",
+        entity_type: "expense",
+        entity_id: expense.id,
+        details: {
+          document_id: id,
+          status,
         },
       });
 
-      await expenseRepository.create({
-        document_id: id,
-        vendor_name: form.vendor_name,
-        documentType: form.documentType,
-        documentNumber: form.documentNumber,
-        documentDate: form.documentDate,
-        dueDate: form.dueDate,
-        currency: form.currency,
-        country: form.country,
-        // Preserve null/empty rather than coercing to 0 — the user may not have
-        // provided these values, and 0 has a different financial meaning than absent.
-        netAmount: form.netAmount !== "" ? parseFloat(form.netAmount) : null,
-        vatRate: form.vatRate !== "" ? parseFloat(form.vatRate) : null,
-        vatAmount: form.vatAmount !== "" ? parseFloat(form.vatAmount) : null,
-        grossAmount: form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
-        category: form.category,
-        paymentMethod: form.paymentMethod,
-        notes: form.notes,
-        status,
-      });
-
-      await documentRepository.update(id, {
-        status:
-          status === "draft"
-            ? "pending_review"
-            : status === "rejected"
-              ? "rejected"
-              : "approved"
-      });
-
       toast.success(
-        status === "approved" ? "Expense approved and saved" :
-          status === "rejected" ? "Document rejected" :
-            "Draft saved"
+        status === "approved"
+          ? "Expense approved and saved"
+          : status === "rejected"
+            ? "Expense rejected"
+            : "Draft saved"
       );
 
-      if (status !== "draft") router.push("/documents/review");
+      if (status !== "draft") {
+        router.push("/documents/review");
+      }
+
+    } catch (err) {
+      console.error(err);
+
+      toast.error(
+        err.message || "Failed to save expense"
+      );
+
     } finally {
       setSaving(false);
     }
@@ -512,17 +726,27 @@ export default function ReviewPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Document Date" fieldKey="documentDate" extractedField={ef.documentDate}>
-                    <Input
+                    <input
                       type="date"
-                      value={form.documentDate}
-                      onChange={(e) => set("documentDate", e.target.value)}
+                      value={formatDateForInput(form.documentDate)}
+                      onChange={(e) =>
+                        setFormData({
+                          ...form,
+                          documentDate: e.target.value
+                        })
+                      }
                     />
                   </Field>
                   <Field label="Due Date" fieldKey="dueDate" extractedField={ef.dueDate}>
-                    <Input
+                    <input
                       type="date"
-                      value={form.dueDate}
-                      onChange={(e) => set("dueDate", e.target.value)}
+                      value={formatDateForInput(form.dueDate)}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          dueDate: e.target.value
+                        })
+                      }
                     />
                   </Field>
                 </div>
@@ -623,11 +847,22 @@ export default function ReviewPage() {
               <div className="space-y-3">
                 <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Classification</p>
                 <Field label="Category" fieldKey="category">
-                  <Select value={form.category} onValueChange={(v) => set("category", v)}>
-                    <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <Select
+                    value={form.category_id}
+                    onValueChange={(value) => set("category_id", value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+
                     <SelectContent>
-                      {APP_CONFIG.defaultCategories.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      {categories.map((category) => (
+                        <SelectItem
+                          key={category.id}
+                          value={category.id}
+                        >
+                          {category.name}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

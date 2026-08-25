@@ -66,6 +66,23 @@ export const expenseRepository = {
         return data;
     },
 
+    async getByDocumentId(documentId) {
+        const response = await fetch(
+            `${BASE_URL}/document/${documentId}`
+        );
+
+        if (response.status === 404) {
+            return null;
+        }
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || "Failed to load expense");
+        }
+
+        return response.json();
+    },
+
 
     // ============================================================
     // GET EXPENSES BY VENDOR

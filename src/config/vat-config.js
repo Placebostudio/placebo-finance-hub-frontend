@@ -138,27 +138,29 @@ export async function geocode(query) {
 }
 
 export const COUNTRY_VAT_RATES = {
-  IL: 18,    // Israel
-  SE: 25,    // Sweden
-  DE: 19,    // Germany
-  FR: 20,    // France
-  GB: 20,    // United Kingdom
-  NL: 21,    // Netherlands
-  BE: 21,    // Belgium
-  AT: 20,    // Austria
-  DK: 25,    // Denmark
-  NO: 25,    // Norway
-  FI: 25.5,  // Finland (standard rate from Sep 2024)
-  IT: 22,    // Italy
-  ES: 21,    // Spain
-  PT: 23,    // Portugal
-  PL: 23,    // Poland
-  CZ: 21,    // Czech Republic
-  HU: 27,    // Hungary
-  RO: 19,    // Romania
-  CH: 8.1,   // Switzerland (standard rate)
-  US: null,  // No federal VAT
-  CA: null,  // Federal GST 5%, provincial varies
+  US: null,   // No federal VAT
+  CA: null,   // Federal GST 5%, provincial varies
+
+  
+  CH: 8.1,    // Switzerland
+  KR: 10,     // South Korea
+  IL: 18,     // Israel
+  DE: 19,     // Germany
+  RO: 19,     // Romania
+  FR: 20,     // France
+  GB: 20,     // United Kingdom
+  AT: 20,     // Austria
+  ES: 21,     // Spain
+  NL: 21,     // Netherlands
+  BE: 21,     // Belgium
+  IT: 22,     // Italy
+  PT: 23,     // Portugal
+  PL: 23,     // Poland
+  SE: 25,     // Sweden
+  DK: 25,     // Denmark
+  NO: 25,     // Norway
+  FI: 25.5,    // Finland
+  HU: 27,      // Hungary
 };
 
 export const COUNTRY_NAMES = {
