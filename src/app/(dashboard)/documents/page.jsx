@@ -15,6 +15,13 @@ import { documentService } from "@/services/document.service";
 import { expenseService } from "@/services/expense.service";
 import { reconciliationService } from "@/services/reconciliation.service";
 import { auditService } from "@/services/audit.service";
+
+import { documentRepository } from "@/services/backend-documents";
+import { auditRepository } from "@/services/backend-audits";
+import { expenseRepository } from "@/services/backend-expenses";
+
+
+
 import { usePeriodStore } from "@/store/period";
 import { useAuthStore } from "@/store/auth";
 import { formatDate, formatFileSize, buildPeriod, periodLabel, dateToPeriod } from "@/lib/utils";
@@ -22,8 +29,8 @@ import { toast } from "sonner";
 
 const STATUS_LABELS = {
   pending_review: { label: "Pending Review", variant: "warning" },
-  approved:       { label: "Approved",       variant: "success" },
-  rejected:       { label: "Rejected",       variant: "destructive" },
+  approved: { label: "Approved", variant: "success" },
+  rejected: { label: "Rejected", variant: "destructive" },
 };
 
 export default function DocumentsPage() {
@@ -31,23 +38,38 @@ export default function DocumentsPage() {
   const period = buildPeriod(year, month);
   const { user: currentUser } = useAuthStore();
 
-  const [documents, setDocuments]           = useState([]);
-  const [expenses, setExpenses]             = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [confirmedMatches, setConfirmedMatches] = useState([]);
-  const [search, setSearch]                 = useState("");
-  const [paymentFilter, setPaymentFilter]   = useState("all");
-  const [matchFilter, setMatchFilter]       = useState("all");
+  const [search, setSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("all");
+  const [matchFilter, setMatchFilter] = useState("all");
 
-  function load() {
-    setDocuments(documentService.getAll());
-    setExpenses(expenseService.getAll());
-    setConfirmedMatches(reconciliationService.getConfirmed());
+  async function load() {
+    try {
+      const [docs, exps, matches] = await Promise.all([
+        documentRepository.getAll(),
+        expenseRepository.getAll(),
+        reconciliationService.getConfirmed(),
+      ]);
+
+      setDocuments(docs ?? []);
+      setExpenses(exps ?? []);
+      setConfirmedMatches(matches ?? []);
+    } catch (err) {
+      console.error("Failed to load documents:", err);
+      toast.error(err.message || "Failed to load documents");
+    }
   }
+
+  useEffect(() => {
+    load();
+  }, []);
 
   useEffect(() => { load(); }, []);
 
   // ── Lookup maps ──────────────────────────────────────────────────────────────
-  const expenseByDocId    = new Map(expenses.map((e) => [e.documentId, e]));
+  const expenseByDocId = new Map(expenses.map((e) => [e.documentId, e]));
   const matchedExpenseIds = new Set(confirmedMatches.map((m) => m.expenseId));
 
   /** Accounting period derived from confirmed document date (via linked expense). */
@@ -70,7 +92,7 @@ export default function DocumentsPage() {
     // Search: filename or vendor name
     if (search) {
       const q = search.toLowerCase();
-      const matchesFile   = doc.fileName.toLowerCase().includes(q);
+      const matchesFile = doc.fileName.toLowerCase().includes(q);
       const matchesVendor = (exp?.vendorName ?? "").toLowerCase().includes(q);
       if (!matchesFile && !matchesVendor) return false;
     }
@@ -87,11 +109,11 @@ export default function DocumentsPage() {
 
     // Match status filter (only CC expenses participate in reconciliation)
     if (matchFilter !== "all") {
-      const isCc      = exp?.paymentMethod === "credit_card";
+      const isCc = exp?.paymentMethod === "credit_card";
       if (!isCc) return false; // non-CC docs excluded when a match filter is active
       const isMatched = exp && matchedExpenseIds.has(exp.id);
-      if (matchFilter === "matched"   && !isMatched) return false;
-      if (matchFilter === "unmatched" &&  isMatched) return false;
+      if (matchFilter === "matched" && !isMatched) return false;
+      if (matchFilter === "unmatched" && isMatched) return false;
     }
 
     return true;
@@ -109,36 +131,58 @@ export default function DocumentsPage() {
   }).length;
 
   async function handleDelete(id) {
+
     if (!confirm("Delete this document?")) return;
-    const doc = documentService.getById(id);
-    if (currentUser?.role === "owner") {
-      await documentService.hardDelete(id);
-      auditService.log({
-        actorId: currentUser.id,
-        actorName: currentUser.fullName,
-        action: "delete",
-        entityType: "document",
-        entityId: id,
-        entityName: doc?.fileName ?? id,
-        before: doc,
-        after: null,
-      });
-      toast.success("Document permanently deleted");
-    } else {
-      documentService.softDelete(id, currentUser?.id, currentUser?.fullName);
-      auditService.log({
-        actorId: currentUser?.id,
-        actorName: currentUser?.fullName,
-        action: "soft_delete_requested",
-        entityType: "document",
-        entityId: id,
-        entityName: doc?.fileName ?? id,
-        before: doc,
-        after: null,
-      });
-      toast.success("Document deleted");
+
+    const doc = documents.find((d) => d.id === id);
+
+    try {
+
+      if (currentUser?.role === "owner") {
+
+        await documentRepository.delete(id);
+
+        await auditRepository.create({
+          actorId: currentUser.id,
+          actorName: currentUser.fullName,
+          action: "delete",
+          entityType: "document",
+          entityId: id,
+          entityName: doc?.file_name ?? doc?.fileName ?? id,
+          before: doc,
+          after: null,
+        });
+
+        toast.success("Document permanently deleted");
+
+      } else {
+
+        await documentRepository.softDelete(id);
+
+        await auditRepository.create({
+          actorId: currentUser?.id,
+          actorName: currentUser?.fullName,
+          action: "soft_delete",
+          entityType: "document",
+          entityId: id,
+          entityName: doc?.file_name ?? doc?.fileName ?? id,
+          before: doc,
+          after: null,
+        });
+
+        toast.success("Document deleted");
+      }
+
+      await load();
+
+    } catch (err) {
+
+      console.error("Failed to delete document:", err);
+
+      toast.error(
+        err.message || "Failed to delete document"
+      );
     }
-    load();
   }
 
   function handlePeriodChange(m, y) {
@@ -251,10 +295,10 @@ export default function DocumentsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((doc) => {
-              const status  = STATUS_LABELS[doc.status] ?? { label: doc.status, variant: "outline" };
+              const status = STATUS_LABELS[doc.status] ?? { label: doc.status, variant: "outline" };
               const isImage = doc.fileType?.startsWith("image/");
-              const exp     = expenseByDocId.get(doc.id);
-              const isCc    = exp?.paymentMethod === "credit_card";
+              const exp = expenseByDocId.get(doc.id);
+              const isCc = exp?.paymentMethod === "credit_card";
               const isMatched = isCc && exp && matchedExpenseIds.has(exp.id);
               return (
                 <Card key={doc.id} className="group hover:border-primary/50 transition-colors">

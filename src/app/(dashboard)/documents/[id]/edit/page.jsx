@@ -84,9 +84,7 @@ export default function EditDocumentPage() {
     setForm(initial);
     setOriginalForm(initial);
 
-    documentService.getFile(docId).then((blob) => {
-      if (blob) setFileUrl(URL.createObjectURL(blob));
-    });
+    
   }, [docId]);
 
   useEffect(() => () => { if (fileUrl) URL.revokeObjectURL(fileUrl); }, [fileUrl]);

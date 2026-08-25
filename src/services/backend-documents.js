@@ -97,53 +97,28 @@ export const documentRepository = {
 
     async getAll(filters = {}) {
 
-        const params =
-            new URLSearchParams();
+        const params = new URLSearchParams();
 
-
-        Object.entries(filters).forEach(
-            ([key, value]) => {
-
-                if (
-                    value !== undefined &&
-                    value !== null &&
-                    value !== ""
-                ) {
-
-                    params.append(
-                        key,
-                        value
-                    );
-                }
-            }
-        );
-
-
-        const queryString =
-            params.toString();
-
-
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
-
-
-        const response =
-            await fetch(url);
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                data.error ||
-                "Failed to get documents"
-            );
+        if (filters.status) {
+            params.set("status", filters.status);
         }
 
+        const query =
+            params.toString()
+                ? `?${params.toString()}`
+                : "";
+
+        const response = await fetch(
+            `${BASE_URL}${query}`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || "Failed to fetch documents"
+            );
+        }
 
         return data;
     },

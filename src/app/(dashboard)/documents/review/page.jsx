@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/layout/page-header";
 import { documentService } from "@/services/document.service";
+import { documentRepository } from "@/services/backend-documents";
 import { useAuthStore } from "@/store/auth";
 import { formatDate, formatFileSize } from "@/lib/utils";
 import { toast } from "sonner";
@@ -26,8 +27,12 @@ export default function ReviewQueuePage() {
   const [deletingId, setDeletingId] = useState(null);
   const { user: currentUser } = useAuthStore();
 
-  function load() {
-    setDocs(documentService.getPendingReview());
+  async function load() {
+    setDocs(
+      await documentRepository.getAll({
+        status: "pending_review"
+      })
+    );
   }
 
   useEffect(() => { load(); }, []);
@@ -37,12 +42,12 @@ export default function ReviewQueuePage() {
     setDeletingId(null);
     if (!id) return;
 
-    const doc = documentService.getById(id);
+    const doc = await documentRepository.getById(id);
     if (currentUser?.role === "owner") {
-      await documentService.hardDelete(id);
+      await documentService.delete(id);
       toast.success("Document permanently deleted");
     } else {
-      documentService.softDelete(id, currentUser?.id, currentUser?.fullName);
+      await documentRepository.softDelete(id);
       toast.success("Document removed from queue");
     }
     load();
@@ -73,9 +78,9 @@ export default function ReviewQueuePage() {
                     <FileText className="h-6 w-6 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{doc.fileName}</p>
+                    <p className="text-sm font-medium truncate">{doc.file_name}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {formatFileSize(doc.fileSize)} · Uploaded {formatDate(doc.uploadedAt)}
+                      {formatFileSize(doc.file_size)} · Uploaded {formatDate(doc.uploaded_at)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">

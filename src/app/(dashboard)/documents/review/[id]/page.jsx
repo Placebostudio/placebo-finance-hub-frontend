@@ -23,6 +23,10 @@ import { getCountryVatRate, COUNTRY_NAMES } from "@/config/vat-config";
 import { toast } from "sonner";
 import Link from "next/link";
 
+import { documentRepository } from "@/services/backend-documents";
+import { documentExtractionRepository } from "@/services/backend-document_extractions";
+import { expenseRepository } from "@/services/backend-expenses";
+
 // Reverse lookup: lowercase country name → ISO code
 // e.g. "israel" → "IL", "germany" → "DE"
 const _NAME_TO_CODE = Object.fromEntries(
@@ -53,18 +57,18 @@ const EMPTY_FORM = {
 
 /** Map field status → badge appearance */
 const FIELD_STATUS_BADGE = {
-  found:   { label: "Extracted",  className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
-  review:  { label: "Auto-detect", className: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" },
-  missing: { label: "Missing",    className: "bg-muted text-muted-foreground" },
-  invalid: { label: "Invalid",    className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" },
+  found: { label: "Extracted", className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  review: { label: "Auto-detect", className: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" },
+  missing: { label: "Missing", className: "bg-muted text-muted-foreground" },
+  invalid: { label: "Invalid", className: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" },
 };
 
 /** Method → human label */
 const METHOD_LABELS = {
-  pdf_text:         "Digital PDF",
-  image_ocr:        "Image OCR",
-  scanned_pdf_ocr:  "Scanned PDF (OCR)",
-  manual:           "Manual entry",
+  pdf_text: "Digital PDF",
+  image_ocr: "Image OCR",
+  scanned_pdf_ocr: "Scanned PDF (OCR)",
+  manual: "Manual entry",
 };
 
 function FieldStatusBadge({ status }) {
@@ -99,25 +103,25 @@ function formFromExtraction(fields) {
   if (!fields) return EMPTY_FORM;
   const f = fields;
   return {
-    vendorName:     f.vendorName?.value    ?? "",
-    documentType:   f.documentType?.value  ?? "receipt",
+    vendorName: f.vendorName?.value ?? "",
+    documentType: f.documentType?.value ?? "receipt",
     documentNumber: f.documentNumber?.value ?? "",
-    documentDate:   f.documentDate?.value  ?? "",
-    dueDate:        f.dueDate?.value       ?? "",
-    currency:       f.currency?.value      ?? "ILS",
+    documentDate: f.documentDate?.value ?? "",
+    dueDate: f.dueDate?.value ?? "",
+    currency: f.currency?.value ?? "ILS",
     // Country: use human-readable name if available
-    country:        f.country?.countryName ?? f.country?.value ?? "",
+    country: f.country?.countryName ?? f.country?.value ?? "",
     // Gross is Total Paid — the primary amount
-    grossAmount:    f.grossAmount?.value != null ? String(f.grossAmount.value) : "",
+    grossAmount: f.grossAmount?.value != null ? String(f.grossAmount.value) : "",
     // vatRate: only set when actually found or derived from country (not null/missing)
-    vatRate:        f.vatRate?.value != null && f.vatRate.status !== "missing"
-                      ? String(f.vatRate.value)
-                      : "",
-    netAmount:      f.netAmount?.value != null  ? String(f.netAmount.value)  : "",
-    vatAmount:      f.vatAmount?.value != null  ? String(f.vatAmount.value)  : "",
-    category:       "",
-    paymentMethod:  "unknown",
-    notes:          "",
+    vatRate: f.vatRate?.value != null && f.vatRate.status !== "missing"
+      ? String(f.vatRate.value)
+      : "",
+    netAmount: f.netAmount?.value != null ? String(f.netAmount.value) : "",
+    vatAmount: f.vatAmount?.value != null ? String(f.vatAmount.value) : "",
+    category: "",
+    paymentMethod: "unknown",
+    notes: "",
   };
 }
 
@@ -137,22 +141,38 @@ export default function ReviewPage() {
   const countryFromExtraction = useRef(false);
 
   useEffect(() => {
-    if (!id) return;
-    const d = documentService.getById(id);
-    if (!d) { setNotFound(true); return; }
-    setDoc(d);
+    async function fetchData() {
+      if (!id) return;
 
-    if (d.extractionResult?.fields) {
-      countryFromExtraction.current = true;
-      setForm(formFromExtraction(d.extractionResult.fields));
+      const d = await documentRepository.getById(id);
+
+      if (!d) {
+        setNotFound(true);
+        return;
+      }
+
+      setDoc(d);
+
+      const extraction =
+        await documentExtractionRepository.getById(id);
+
+      if (extraction?.fields) {
+        countryFromExtraction.current = true;
+
+        setForm(
+          formFromExtraction(
+            extraction.fields
+          )
+        );
+      }
+
+      if (d.url) {
+        setFileUrl(d.url);
+      }
     }
 
-    documentService.getFile(id).then((blob) => {
-      if (blob) setFileUrl(URL.createObjectURL(blob));
-    });
+    fetchData();
   }, [id]);
-
-  useEffect(() => () => { if (fileUrl) URL.revokeObjectURL(fileUrl); }, [fileUrl]);
 
   // When Country changes (from any source), look up the standard VAT rate and apply
   // it — unless the user has already manually overridden the VAT Rate field.
@@ -183,7 +203,7 @@ export default function ReviewPage() {
       }
       return { ...f, vatRate: rateStr };
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.country]);
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
@@ -208,37 +228,40 @@ export default function ReviewPage() {
   const save = async (status) => {
     setSaving(true);
     try {
-      expenseService.create({
-        documentId:     id,
-        vendorName:     form.vendorName,
-        documentType:   form.documentType,
+      await expenseRepository.create({
+        documentId: id,
+        vendorName: form.vendorName,
+        documentType: form.documentType,
         documentNumber: form.documentNumber,
-        documentDate:   form.documentDate,
-        dueDate:        form.dueDate,
-        currency:       form.currency,
-        country:        form.country,
+        documentDate: form.documentDate,
+        dueDate: form.dueDate,
+        currency: form.currency,
+        country: form.country,
         // Preserve null/empty rather than coercing to 0 — the user may not have
         // provided these values, and 0 has a different financial meaning than absent.
-        netAmount:      form.netAmount   !== "" ? parseFloat(form.netAmount)   : null,
-        vatRate:        form.vatRate     !== "" ? parseFloat(form.vatRate)     : null,
-        vatAmount:      form.vatAmount   !== "" ? parseFloat(form.vatAmount)   : null,
-        grossAmount:    form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
-        category:       form.category,
-        paymentMethod:  form.paymentMethod,
-        notes:          form.notes,
+        netAmount: form.netAmount !== "" ? parseFloat(form.netAmount) : null,
+        vatRate: form.vatRate !== "" ? parseFloat(form.vatRate) : null,
+        vatAmount: form.vatAmount !== "" ? parseFloat(form.vatAmount) : null,
+        grossAmount: form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
+        category: form.category,
+        paymentMethod: form.paymentMethod,
+        notes: form.notes,
         status,
       });
 
-      documentService.updateStatus(
-        id,
-        status === "draft"     ? "pending_review" :
-        status === "rejected"  ? "rejected" : "approved"
-      );
+      await documentRepository.update(id, {
+        status:
+          status === "draft"
+            ? "pending_review"
+            : status === "rejected"
+              ? "rejected"
+              : "approved"
+      });
 
       toast.success(
         status === "approved" ? "Expense approved and saved" :
-        status === "rejected" ? "Document rejected" :
-        "Draft saved"
+          status === "rejected" ? "Document rejected" :
+            "Draft saved"
       );
 
       if (status !== "draft") router.push("/documents/review");
@@ -267,9 +290,9 @@ export default function ReviewPage() {
 
   // Check whether net + vatAmount ≈ gross for live form values
   const liveGross = parseFloat(form.grossAmount) || 0;
-  const liveNet   = parseFloat(form.netAmount)   || 0;
-  const liveVat   = parseFloat(form.vatAmount)   || 0;
-  const liveSum   = Math.round((liveNet + liveVat) * 100) / 100;
+  const liveNet = parseFloat(form.netAmount) || 0;
+  const liveVat = parseFloat(form.vatAmount) || 0;
+  const liveSum = Math.round((liveNet + liveVat) * 100) / 100;
   const liveAmountMismatch = liveGross > 0 && liveNet > 0 && liveVat > 0 &&
     Math.abs(liveSum - liveGross) > Math.max(0.05, liveGross * 0.005);
 

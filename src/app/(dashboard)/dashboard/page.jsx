@@ -12,6 +12,11 @@ import { transactionService } from "@/services/transaction.service";
 import { reconciliationService } from "@/services/reconciliation.service";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
+import { documentRepository } from "@/services/backend-documents";
+import { expenseRepository } from "@/services/backend-expenses";
+import { transactionRepository } from "@/services/backend-transaction";
+
+
 function StatCard({ icon: Icon, label, value, color, href }) {
   const card = (
     <Card className={href ? "hover:border-primary/50 transition-colors cursor-pointer" : ""}>
@@ -33,58 +38,194 @@ export default function DashboardPage() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    const documents = documentService.getAll();
-    const expenses = expenseService.getAll();
-    const transactions = transactionService.getAll();
-    const matches = reconciliationService.getConfirmed();
+    async function loadDashboard() {
+      try {
 
-    const pendingReview = documents.filter((d) => d.status === "pending_review");
-    const ccExpenses = expenseService.getApprovedCreditCard();
-    const unmatchedTxns = transactions.filter((t) => t.status === "unmatched");
-    const missingReceipts = unmatchedTxns.length;
-    const suggestedCandidates = reconciliationService.generateCandidates(ccExpenses, transactions);
+        // Documents are filtered by the backend.
+        const [
+          documents,
+          pendingReview,
+          expenses,
+          transactions,
+        ] = await Promise.all([
+          documentRepository.getAll(),
+          documentRepository.getAll({
+            status: "pending_review",
+          }),
+          expenseRepository.getAll(),
+          transactionRepository.getAll(),
+        ]);
 
-    // Attention items
-    const attentionItems = [
-      ...pendingReview.slice(0, 3).map((d) => ({
-        id: d.id,
-        label: d.fileName,
-        detail: "Needs review",
-        type: "review",
-        href: `/documents/review/${d.id}`,
-      })),
-      ...unmatchedTxns.slice(0, 3).map((t) => ({
-        id: t.id,
-        label: t.description,
-        detail: `${formatCurrency(Math.abs(t.billedAmount), t.billedCurrency)} — Missing receipt`,
-        type: "missing",
-        href: "/reconciliation",
-      })),
-      ...suggestedCandidates.slice(0, 2).map((c) => ({
-        id: c.expenseId,
-        label: c.expense.vendorName || "Unknown vendor",
-        detail: `${formatCurrency(c.expense.grossAmount, c.expense.currency)} — Suggested match`,
-        type: "match",
-        href: "/reconciliation",
-      })),
-    ].slice(0, 6);
+        // Reconciliation is frontend-only.
+        const matches =
+          reconciliationService.getConfirmed();
 
-    // Recent expenses
-    const recentExpenses = [...expenses]
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, 5);
+        // Approved credit-card expenses.
+        // Expense filtering can also be moved to the backend
+        // once the expense repository supports those filters.
+        const ccExpenses = expenses.filter(
+          (e) =>
+            e.status === "approved" &&
+            (e.paymentMethod ?? e.payment_method) ===
+            "credit_card"
+        );
 
-    setData({
-      pendingReview: pendingReview.length,
-      totalDocuments: documents.length,
-      approvedExpenses: expenses.filter((e) => e.status === "approved").length,
-      missingReceipts,
-      suggestedMatches: suggestedCandidates.filter((c) => c.matchType === "strong_candidate").length,
-      matched: matches.length,
-      totalCcTxns: transactions.length,
-      attentionItems,
-      recentExpenses,
-    });
+        // Transaction filtering can also be moved to the backend
+        // once the transaction repository supports status filters.
+        const unmatchedTxns = transactions.filter(
+          (t) => t.status === "unmatched"
+        );
+
+        const missingReceipts =
+          unmatchedTxns.length;
+
+        const suggestedCandidates =
+          reconciliationService.generateCandidates(
+            ccExpenses,
+            transactions
+          );
+
+
+        // ─────────────────────────────────────────────
+        // ATTENTION ITEMS
+        // ─────────────────────────────────────────────
+
+        const attentionItems = [
+          ...pendingReview
+            .slice(0, 3)
+            .map((d) => ({
+              id: d.id,
+
+              label:
+                d.file_name ??
+                d.fileName ??
+                "Unnamed document",
+
+              detail: "Needs review",
+
+              type: "review",
+
+              href:
+                `/documents/review/${d.id}`,
+            })),
+
+          ...unmatchedTxns
+            .slice(0, 3)
+            .map((t) => ({
+              id: t.id,
+
+              label:
+                t.description ??
+                "Unknown transaction",
+
+              detail:
+                `${formatCurrency(
+                  Math.abs(
+                    t.billed_amount ??
+                    t.billedAmount ??
+                    0
+                  ),
+                  t.billed_currency ??
+                  t.billedCurrency
+                )} — Missing receipt`,
+
+              type: "missing",
+
+              href: "/reconciliation",
+            })),
+
+          ...suggestedCandidates
+            .slice(0, 2)
+            .map((c) => ({
+              id: c.expenseId,
+
+              label:
+                c.expense?.vendor_name ??
+                c.expense?.vendorName ??
+                "Unknown vendor",
+
+              detail:
+                `${formatCurrency(
+                  c.expense?.gross_amount ??
+                  c.expense?.grossAmount ??
+                  0,
+                  c.expense?.currency
+                )} — Suggested match`,
+
+              type: "match",
+
+              href: "/reconciliation",
+            })),
+        ].slice(0, 6);
+
+
+        // ─────────────────────────────────────────────
+        // RECENT EXPENSES
+        // ─────────────────────────────────────────────
+
+        const recentExpenses = [...expenses]
+          .sort(
+            (a, b) =>
+              new Date(
+                b.created_at ??
+                b.createdAt
+              ) -
+              new Date(
+                a.created_at ??
+                a.createdAt
+              )
+          )
+          .slice(0, 5);
+
+
+        // ─────────────────────────────────────────────
+        // DASHBOARD DATA
+        // ─────────────────────────────────────────────
+
+        setData({
+          pendingReview:
+            pendingReview.length,
+
+          totalDocuments:
+            documents.length,
+
+          approvedExpenses:
+            expenses.filter(
+              (e) => e.status === "approved"
+            ).length,
+
+          missingReceipts,
+
+          suggestedMatches:
+            suggestedCandidates.filter(
+              (c) =>
+                c.matchType ===
+                "strong_candidate"
+            ).length,
+
+          matched:
+            matches.length,
+
+          totalCcTxns:
+            transactions.length,
+
+          attentionItems,
+
+          recentExpenses,
+        });
+
+      } catch (err) {
+
+        console.error(
+          "Failed to load dashboard:",
+          err
+        );
+
+      }
+    }
+
+    loadDashboard();
+
   }, []);
 
   if (!data) return null;
@@ -156,10 +297,9 @@ export default function DashboardPage() {
                 data.attentionItems.map((item) => (
                   <Link key={item.id} href={item.href}>
                     <div className="flex items-center gap-3 rounded-lg p-3 hover:bg-muted/50 transition-colors cursor-pointer">
-                      <div className={`h-2 w-2 rounded-full flex-shrink-0 ${
-                        item.type === "review" ? "bg-yellow-500" :
+                      <div className={`h-2 w-2 rounded-full flex-shrink-0 ${item.type === "review" ? "bg-yellow-500" :
                         item.type === "missing" ? "bg-red-500" : "bg-blue-500"
-                      }`} />
+                        }`} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{item.label}</p>
                         <p className="text-xs text-muted-foreground">{item.detail}</p>
