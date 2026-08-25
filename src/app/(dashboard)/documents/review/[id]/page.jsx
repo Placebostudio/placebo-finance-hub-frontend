@@ -228,9 +228,59 @@ export default function ReviewPage() {
   const save = async (status) => {
     setSaving(true);
     try {
+      await documentExtractionRepository.update(id, {
+        fields: {
+          vendorName: {
+            ...extraction.fields.vendorName,
+            value: form.vendorName,
+          },
+          documentType: {
+            ...extraction.fields.documentType,
+            value: form.documentType,
+          },
+          documentNumber: {
+            ...extraction.fields.documentNumber,
+            value: form.documentNumber,
+          },
+          documentDate: {
+            ...extraction.fields.documentDate,
+            value: form.documentDate,
+          },
+          dueDate: {
+            ...extraction.fields.dueDate,
+            value: form.dueDate,
+          },
+          currency: {
+            ...extraction.fields.currency,
+            value: form.currency,
+          },
+          country: {
+            ...extraction.fields.country,
+            value: form.country,
+            countryName: form.country,
+          },
+          grossAmount: {
+            ...extraction.fields.grossAmount,
+            value: form.grossAmount !== "" ? parseFloat(form.grossAmount) : null,
+          },
+          vatRate: {
+            ...extraction.fields.vatRate,
+            value: form.vatRate !== "" ? parseFloat(form.vatRate) : null,
+          },
+          netAmount: {
+            ...extraction.fields.netAmount,
+            value: form.netAmount !== "" ? parseFloat(form.netAmount) : null,
+          },
+          vatAmount: {
+            ...extraction.fields.vatAmount,
+            value: form.vatAmount !== "" ? parseFloat(form.vatAmount) : null,
+          },
+        },
+      });
+
       await expenseRepository.create({
-        documentId: id,
-        vendorName: form.vendorName,
+        document_id: id,
+        vendor_name: form.vendor_name,
         documentType: form.documentType,
         documentNumber: form.documentNumber,
         documentDate: form.documentDate,
