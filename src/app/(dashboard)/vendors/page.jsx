@@ -9,8 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { PageHeader } from "@/components/layout/page-header";
-import { vendorService, categoryService } from "@/services/vendor.service";
+// import { vendorService, categoryService } from "@/services/vendor.service";
 import { toast } from "sonner";
+
+import { vendorRepository } from "@/services/backend-vendors";
+import { categoryRepository } from "@/services/backend-categories";
 
 function VendorDialog({ open, vendor, onClose, onSaved }) {
   const [name, setName] = useState(vendor?.name ?? "");
@@ -23,13 +26,37 @@ function VendorDialog({ open, vendor, onClose, onSaved }) {
     setNotes(vendor?.notes ?? "");
   }, [vendor]);
 
-  const handleSave = () => {
-    if (!name.trim()) { toast.error("Name is required"); return; }
-    if (vendor) vendorService.update(vendor.id, { name, defaultCategory, notes });
-    else vendorService.create({ name, defaultCategory, notes });
-    toast.success(vendor ? "Vendor updated" : "Vendor created");
-    onSaved();
-    onClose();
+  const handleSave = async () => {
+    if (!name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+
+    try {
+      if (vendor) {
+        await vendorRepository.update(vendor.id, {
+          name: name.trim(),
+          defaultCategory,
+          notes,
+        });
+      } else {
+        await vendorRepository.create({
+          name: name.trim(),
+          defaultCategory,
+          notes,
+        });
+      }
+
+      toast.success(vendor ? "Vendor updated" : "Vendor created");
+
+      onSaved();
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error(
+        err.message || (vendor ? "Failed to update vendor" : "Failed to create vendor")
+      );
+    }
   };
 
   return (
@@ -57,37 +84,74 @@ export default function VendorsPage() {
   const [editingVendor, setEditingVendor] = useState(null);
   const [newCategory, setNewCategory] = useState("");
 
-  function load() {
-    setVendors(vendorService.getAll());
-    setCategories(categoryService.getAll());
+  async function load() {
+    const categories = await categoryRepository.getAll({
+      is_active: true
+    });
+    setCategories(categories);
+    const vendors = await vendorRepository.getAll({
+      is_active: true
+    });
+    setVendors(vendors);
   }
   useEffect(() => { load(); }, []);
 
-  function handleDeleteVendor(id) {
+  async function handleDeleteVendor(id) {
     if (!confirm("Delete this vendor?")) return;
-    vendorService.delete(id);
-    toast.success("Vendor deleted");
-    load();
+
+    try {
+      await vendorRepository.delete(id);
+
+      toast.success("Vendor deleted");
+      load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to delete vendor");
+    }
   }
 
-  function handleAddCategory() {
+  async function handleAddCategory() {
     if (!newCategory.trim()) return;
-    categoryService.create(newCategory.trim());
-    setNewCategory("");
-    toast.success("Category added");
-    load();
+
+    try {
+      await categoryRepository.create({
+        name: newCategory.trim(),
+      });
+
+      setNewCategory("");
+      toast.success("Category added");
+      load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to add category");
+    }
   }
 
-  function handleToggleCategory(id, current) {
-    categoryService.update(id, { isActive: !current });
-    load();
+  async function handleToggleCategory(id, current) {
+    try {
+      await categoryRepository.update(id, {
+        is_active: !current,
+      });
+
+      load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to update category");
+    }
   }
 
-  function handleDeleteCategory(id) {
+  async function handleDeleteCategory(id) {
     if (!confirm("Delete this category?")) return;
-    categoryService.delete(id);
-    toast.success("Category deleted");
-    load();
+
+    try {
+      await categoryRepository.delete(id);
+
+      toast.success("Category deleted");
+      load();
+    } catch (err) {
+      console.error(err);
+      toast.error(err.message || "Failed to delete category");
+    }
   }
 
   return (
@@ -127,19 +191,19 @@ export default function VendorsPage() {
                 <div key={cat.id} className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50">
                   <div className="flex items-center gap-2">
                     <Tag className="h-4 w-4 text-muted-foreground" />
-                    <span className={`text-sm ${!cat.isActive ? "text-muted-foreground line-through" : ""}`}>
+                    <span className={`text-sm ${!cat.is_active ? "text-muted-foreground line-through" : ""}`}>
                       {cat.name}
                     </span>
-                    {!cat.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+                    {!cat.is_active && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
                   </div>
                   <div className="flex gap-1">
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 text-xs"
-                      onClick={() => handleToggleCategory(cat.id, cat.isActive)}
+                      onClick={() => handleToggleCategory(cat.id, cat.is_active)}
                     >
-                      {cat.isActive ? "Disable" : "Enable"}
+                      {cat.is_active ? "Disable" : "Enable"}
                     </Button>
                     <Button
                       size="icon"

@@ -14,11 +14,13 @@ import { PageHeader } from "@/components/layout/page-header";
 import { auditService } from "@/services/audit.service";
 import { useOwnerGuard } from "@/hooks/use-owner-guard";
 
+import { auditRepository } from "@/services/backend-audits";
+
 const ACTION_LABELS = {
   create:                 { label: "Created",            variant: "success" },
   update:                 { label: "Updated",            variant: "secondary" },
   delete:                 { label: "Deleted",            variant: "destructive" },
-  soft_delete_requested:  { label: "Delete Requested",   variant: "warning" },
+  soft_delete:  { label: "Delete Requested",   variant: "warning" },
   restore:                { label: "Restored",           variant: "default" },
   permanent_delete:       { label: "Permanently Deleted", variant: "destructive" },
 };
@@ -112,12 +114,12 @@ export default function AuditLogPage() {
   const [actionFilter, setActionFilter] = useState("all");
   const [entityFilter, setEntityFilter] = useState("all");
 
-  function load() {
+  async function load() {
     const filters = {};
     if (search)       filters.search     = search;
     if (actionFilter !== "all") filters.action = actionFilter;
     if (entityFilter !== "all") filters.entityType = entityFilter;
-    setEntries(auditService.getAll(filters));
+    setEntries(await auditRepository.getAll(filters));
   }
 
   useEffect(() => {
