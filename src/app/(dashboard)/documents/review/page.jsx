@@ -18,6 +18,7 @@ import {
 import { PageHeader } from "@/components/layout/page-header";
 import { documentService } from "@/services/document.service";
 import { documentRepository } from "@/services/backend-documents";
+import { auditRepository } from "@/services/backend-audits";
 import { useAuthStore } from "@/store/auth";
 import { formatDate, formatFileSize } from "@/lib/utils";
 import { toast } from "sonner";
@@ -40,17 +41,55 @@ export default function ReviewQueuePage() {
   async function handleConfirmDelete() {
     const id = deletingId;
     setDeletingId(null);
+
     if (!id) return;
 
-    const doc = await documentRepository.getById(id);
-    if (currentUser?.role === "owner") {
-      await documentService.delete(id);
-      toast.success("Document permanently deleted");
-    } else {
-      await documentRepository.softDelete(id);
-      toast.success("Document removed from queue");
+    try {
+      // Get the document before changing/deleting it
+      const doc = await documentRepository.getById(id);
+
+      if (!doc) {
+        toast.error("Document not found");
+        return;
+      }
+
+      if (currentUser?.role === "owner") {
+        // Owner → permanent delete
+        await documentRepository.delete(id);
+
+        await auditRepository.create({
+          action: "delete",
+          entity_type: "document",
+          entity_id: id,
+          details: {
+            before: doc,
+            after: null,
+          },
+        });
+
+        toast.success("Document permanently deleted");
+      } else {
+        // Everyone else → soft delete
+        const updatedDoc = await documentRepository.softDelete(id);
+
+        await auditRepository.create({
+          action: "soft_delete",
+          entity_type: "document",
+          entity_id: id,
+          details: {
+            before: doc,
+            after: updatedDoc,
+          },
+        });
+
+        toast.success("Document removed from queue");
+      }
+
+      load();
+    } catch (err) {
+      console.error("Failed to delete document:", err);
+      toast.error(err.message || "Failed to delete document");
     }
-    load();
   }
 
   return (

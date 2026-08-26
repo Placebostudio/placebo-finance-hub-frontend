@@ -16,6 +16,10 @@ import { formatCurrency, buildPeriod, periodLabel } from "@/lib/utils";
 import { usePeriodStore } from "@/store/period";
 import ExpenseLedger from "./ExpenseLedger";
 
+import { expenseRepository } from "@/services/backend-expenses";
+import { expenseLedgerRepository } from "@/services/backend-expense-ledger";
+import { transactionRepository } from "@/services/backend-transaction";
+
 function StatRow({ label, value, sub }) {
   return (
     <div className="flex items-center justify-between py-3 border-b last:border-0">
@@ -39,72 +43,219 @@ function OverviewTab() {
   const [exportError, setExportError] = useState(null);
 
   useEffect(() => {
-    const allExpenses = expenseService.getAll().filter(
-      (e) => e.documentDate && e.documentDate.startsWith(period)
-    );
-    const allTxns = transactionService.getAll();
-    const confirmed = reconciliationService.getConfirmed();
-    const ccExpenses = allExpenses.filter(
-      (e) => e.status === "approved" && e.paymentMethod === "credit_card"
-    );
-    const approvedExpenses = allExpenses.filter((e) => e.status === "approved");
-    const matchedExpenseIds = new Set(confirmed.map((m) => m.expenseId));
-    const matchedTxnIds = new Set(confirmed.map((m) => m.transactionId));
+    async function loadReport() {
+      try {
+        const [
+          allExpenses,
+          allTxns,
+          expenseLedger,
+        ] = await Promise.all([
+          expenseRepository.getAll({ period }),
+          transactionRepository.getAll(),
+          expenseLedgerRepository.getAll({ period }),
+        ]);
 
-    const ccExpensesWithoutCharge = ccExpenses.filter((e) => !matchedExpenseIds.has(e.id));
+        const confirmed = reconciliationService.getConfirmed();
 
-    const periodStmts = statementService.getByPeriod(period);
-    const periodStmtIds = new Set(periodStmts.map((s) => s.id));
-    const periodTxns = allTxns.filter((t) => periodStmtIds.has(t.statementId));
+        // ─────────────────────────────────────────────
+        // EXPENSES
+        // Backend fields:
+        // status, payment_method, gross_amount, vat_amount
+        // ─────────────────────────────────────────────
 
-    const unmatchedTxns = periodTxns.filter((t) => !matchedTxnIds.has(t.id) && t.status !== "ignored");
-    const nonCcExpenses = approvedExpenses.filter(
-      (e) => e.paymentMethod && e.paymentMethod !== "credit_card"
-    );
+        const approvedExpenses = allExpenses.filter(
+          (e) => e.status === "approved"
+        );
 
-    const totalGross = approvedExpenses.reduce((s, e) => s + (e.grossAmount ?? 0), 0);
-    const totalVat = approvedExpenses.reduce((s, e) => s + (e.vatAmount ?? 0), 0);
+        const draftExpenses = allExpenses.filter(
+          (e) => e.status === "draft"
+        );
 
-    const isReady =
-      allExpenses.filter((e) => e.status === "draft").length === 0 &&
-      unmatchedTxns.length === 0 &&
-      ccExpensesWithoutCharge.length === 0;
+        const ccExpenses = approvedExpenses.filter(
+          (e) => e.payment_method === "credit_card"
+        );
 
-    const settings = settingsService.get();
+        const nonCcExpenses = approvedExpenses.filter(
+          (e) =>
+            e.payment_method &&
+            e.payment_method !== "credit_card"
+        );
 
-    setReport({
-      totalExpenses: allExpenses.length,
-      approvedExpenses: approvedExpenses.length,
-      draftExpenses: allExpenses.filter((e) => e.status === "draft").length,
-      totalGross,
-      totalVat,
-      ccExpenses: ccExpenses.length,
-      matchedCC: ccExpenses.filter((e) => matchedExpenseIds.has(e.id)).length,
-      periodTxns: periodTxns.length,
-      matchedTxns: periodTxns.filter((t) => matchedTxnIds.has(t.id)).length,
-      unmatchedTxns: unmatchedTxns.length,
-      ccExpensesWithoutCharge: ccExpensesWithoutCharge.length,
-      statements: periodStmts.length,
-      isReady,
-    });
 
-    setReportData({
-      period,
-      periodLabel: periodLabel(period),
-      companyName: settings?.companyName ?? "Company",
-      expenses: allExpenses,
-      transactions: periodTxns,
-      confirmedMatches: confirmed.filter(
-        (m) =>
-          matchedExpenseIds.has(m.expenseId) &&
-          matchedTxnIds.has(m.transactionId) &&
-          periodStmtIds.has(allTxns.find((t) => t.id === m.transactionId)?.statementId)
-      ),
-      unmatchedTxns,
-      expensesWithoutCharge: ccExpensesWithoutCharge,
-      nonCcExpenses,
-    });
-  }, [period]); // eslint-disable-line react-hooks/exhaustive-deps
+        // ─────────────────────────────────────────────
+        // CONFIRMED MATCHES
+        // reconciliationService still uses frontend names
+        // ─────────────────────────────────────────────
+
+        const matchedExpenseIds = new Set(
+          confirmed.map((m) => m.expenseId)
+        );
+
+        const matchedTxnIds = new Set(
+          confirmed.map((m) => m.transactionId)
+        );
+
+        const ccExpensesWithoutCharge = ccExpenses.filter(
+          (e) => !matchedExpenseIds.has(e.id)
+        );
+
+
+        // ─────────────────────────────────────────────
+        // STATEMENTS
+        //
+        // Expense ledger SQL returns:
+        // linked_statement_id
+        //
+        // NOT: id
+        // ─────────────────────────────────────────────
+
+        const periodStmtIds = new Set(
+          expenseLedger
+            .map((row) => row.linked_statement_id)
+            .filter(Boolean)
+        );
+
+
+        // ─────────────────────────────────────────────
+        // TRANSACTIONS
+        //
+        // Backend transaction field:
+        // statement_id
+        // ─────────────────────────────────────────────
+
+        const periodTxns = allTxns.filter(
+          (t) => periodStmtIds.has(t.statement_id)
+        );
+
+        const unmatchedTxns = periodTxns.filter(
+          (t) =>
+            !matchedTxnIds.has(t.id) &&
+            t.status !== "ignored"
+        );
+
+
+        // ─────────────────────────────────────────────
+        // TOTALS
+        // PostgreSQL NUMERIC values may arrive as strings,
+        // so explicitly convert them to numbers.
+        // ─────────────────────────────────────────────
+
+        const totalGross = approvedExpenses.reduce(
+          (sum, e) =>
+            sum + Number(e.gross_amount ?? 0),
+          0
+        );
+
+        const totalVat = approvedExpenses.reduce(
+          (sum, e) =>
+            sum + Number(e.vat_amount ?? 0),
+          0
+        );
+
+
+        // ─────────────────────────────────────────────
+        // READY CHECK
+        // ─────────────────────────────────────────────
+
+        const isReady =
+          draftExpenses.length === 0 &&
+          unmatchedTxns.length === 0 &&
+          ccExpensesWithoutCharge.length === 0;
+
+
+        const settings = settingsService.get();
+
+
+        // ─────────────────────────────────────────────
+        // REPORT SUMMARY
+        // ─────────────────────────────────────────────
+
+        setReport({
+          totalExpenses: allExpenses.length,
+
+          approvedExpenses: approvedExpenses.length,
+
+          draftExpenses: draftExpenses.length,
+
+          totalGross,
+
+          totalVat,
+
+          ccExpenses: ccExpenses.length,
+
+          matchedCC: ccExpenses.filter(
+            (e) => matchedExpenseIds.has(e.id)
+          ).length,
+
+          periodTxns: periodTxns.length,
+
+          matchedTxns: periodTxns.filter(
+            (t) => matchedTxnIds.has(t.id)
+          ).length,
+
+          unmatchedTxns: unmatchedTxns.length,
+
+          ccExpensesWithoutCharge:
+            ccExpensesWithoutCharge.length,
+
+          statements: periodStmtIds.size,
+
+          isReady,
+        });
+
+
+        // ─────────────────────────────────────────────
+        // REPORT DATA
+        // ─────────────────────────────────────────────
+
+        setReportData({
+          period,
+
+          periodLabel: periodLabel(period),
+
+          companyName:
+            settings?.companyName ?? "Company",
+
+          expenses: allExpenses,
+
+          transactions: periodTxns,
+
+
+          // Confirmed matches that belong to this period
+          confirmedMatches: confirmed.filter((m) => {
+            const transaction = allTxns.find(
+              (t) => t.id === m.transactionId
+            );
+
+            return (
+              periodStmtIds.has(
+                transaction?.statement_id
+              )
+            );
+          }),
+
+
+          unmatchedTxns,
+
+          expensesWithoutCharge:
+            ccExpensesWithoutCharge,
+
+          nonCcExpenses,
+        });
+
+      } catch (error) {
+
+        console.error(
+          "Failed to load report:",
+          error
+        );
+
+      }
+    }
+
+    loadReport();
+
+  }, [period]);
 
   async function handleExcelExport() {
     if (!reportData) return;

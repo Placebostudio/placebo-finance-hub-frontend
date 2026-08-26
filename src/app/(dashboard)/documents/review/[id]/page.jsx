@@ -487,8 +487,12 @@ export default function ReviewPage() {
         await expenseRepository.getByDocumentId(id);
 
       let expense;
+      let before = null;
 
       if (existingExpense) {
+        // Keep the original state for the audit log
+        before = existingExpense;
+
         // Existing expense → update it
         expense = await expenseRepository.update(
           existingExpense.id,
@@ -504,11 +508,43 @@ export default function ReviewPage() {
         action: existingExpense ? "update" : "create",
         entity_type: "expense",
         entity_id: expense.id,
+        before,
+        after: expense,
         details: {
           document_id: id,
           status,
         },
       });
+
+      // ------------------------------------------------------------
+      // APPROVING THE EXPENSE ALSO APPROVES THE RELATED DOCUMENT
+      // ------------------------------------------------------------
+
+      if (status === "approved") {
+        // Get the current document state before changing it
+        const document =
+          await documentRepository.getById(id);
+
+        if (document) {
+          const documentAfter =
+            await documentRepository.update(id, {
+              status: "approved",
+            });
+
+          // Audit the document status change
+          await auditRepository.create({
+            action: "update",
+            entity_type: "document",
+            entity_id: id,
+            before: document,
+            after: documentAfter,
+            details: {
+              expense_id: expense.id,
+              status: "approved",
+            },
+          });
+        }
+      }
 
       toast.success(
         status === "approved"

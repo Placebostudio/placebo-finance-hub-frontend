@@ -69,13 +69,16 @@ export default function DocumentsPage() {
   useEffect(() => { load(); }, []);
 
   // ── Lookup maps ──────────────────────────────────────────────────────────────
-  const expenseByDocId = new Map(expenses.map((e) => [e.documentId, e]));
-  const matchedExpenseIds = new Set(confirmedMatches.map((m) => m.expenseId));
+  const expenseByDocId = new Map(expenses.map((e) => [e.document_id, e]));
+  const matchedExpenseIds = new Set(confirmedMatches.map((m) => m.expense_id));
 
   /** Accounting period derived from confirmed document date (via linked expense). */
   function getDocPeriod(doc) {
     const exp = expenseByDocId.get(doc.id);
-    return exp?.documentDate ? dateToPeriod(exp.documentDate) : null;
+
+    return exp?.document_date
+      ? dateToPeriod(exp.document_date)
+      : null;
   }
 
   // ── Split documents ──────────────────────────────────────────────────────────
@@ -92,14 +95,14 @@ export default function DocumentsPage() {
     // Search: filename or vendor name
     if (search) {
       const q = search.toLowerCase();
-      const matchesFile = doc.fileName.toLowerCase().includes(q);
-      const matchesVendor = (exp?.vendorName ?? "").toLowerCase().includes(q);
+      const matchesFile = (doc.file_name ?? "").toLowerCase().includes(q);
+      const matchesVendor = (exp?.vendor_name ?? "").toLowerCase().includes(q);
       if (!matchesFile && !matchesVendor) return false;
     }
 
     // Payment method filter
     if (paymentFilter !== "all") {
-      const pm = exp?.paymentMethod ?? "unknown";
+      const pm = exp?.payment_method ?? "unknown";
       if (paymentFilter === "other") {
         if (pm === "credit_card" || pm === "cash" || pm === "bank_transfer") return false;
       } else if (pm !== paymentFilter) {
@@ -109,7 +112,7 @@ export default function DocumentsPage() {
 
     // Match status filter (only CC expenses participate in reconciliation)
     if (matchFilter !== "all") {
-      const isCc = exp?.paymentMethod === "credit_card";
+      const isCc = exp?.payment_method === "credit_card";
       if (!isCc) return false; // non-CC docs excluded when a match filter is active
       const isMatched = exp && matchedExpenseIds.has(exp.id);
       if (matchFilter === "matched" && !isMatched) return false;
@@ -120,9 +123,9 @@ export default function DocumentsPage() {
   });
 
   // ── Period stats ─────────────────────────────────────────────────────────────
-  const ccDocs = periodDocs.filter((d) => expenseByDocId.get(d.id)?.paymentMethod === "credit_card");
+  const ccDocs = periodDocs.filter((d) => expenseByDocId.get(d.id)?.payment_method === "credit_card");
   const otherDocs = periodDocs.filter((d) => {
-    const pm = expenseByDocId.get(d.id)?.paymentMethod;
+    const pm = expenseByDocId.get(d.id)?.payment_method;
     return pm !== "credit_card";
   });
   const matchedCcCount = ccDocs.filter((d) => {
@@ -296,7 +299,7 @@ export default function DocumentsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtered.map((doc) => {
               const status = STATUS_LABELS[doc.status] ?? { label: doc.status, variant: "outline" };
-              const isImage = doc.fileType?.startsWith("image/");
+              const isImage = doc.file_type?.startsWith("image/");
               const exp = expenseByDocId.get(doc.id);
               const isCc = exp?.paymentMethod === "credit_card";
               const isMatched = isCc && exp && matchedExpenseIds.has(exp.id);
@@ -314,8 +317,8 @@ export default function DocumentsPage() {
                         {doc.fileName}
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {exp?.vendorName ? `${exp.vendorName} · ` : ""}
-                        {exp?.documentDate ? formatDate(exp.documentDate) : formatDate(doc.uploadedAt)}
+                        {exp?.vendor_name ? `${exp.vendor_name} · ` : ""}
+                        {exp?.document_date ? formatDate(exp.document_date) : formatDate(doc.uploaded_at)}
                       </p>
                     </div>
 
@@ -375,9 +378,9 @@ export default function DocumentsPage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {needsReviewDocs
-                .filter((d) => !search || d.fileName.toLowerCase().includes(search.toLowerCase()))
+                .filter((d) => !search || d.file_name.toLowerCase().includes(search.toLowerCase()))
                 .map((doc) => {
-                  const isImage = doc.fileType?.startsWith("image/");
+                  const isImage = doc.file_type?.startsWith("image/");
                   return (
                     <Card
                       key={doc.id}
@@ -390,11 +393,11 @@ export default function DocumentsPage() {
                             : <FileText className="h-10 w-10 text-muted-foreground/40" />}
                         </div>
                         <div>
-                          <p className="text-sm font-medium truncate" title={doc.fileName}>
-                            {doc.fileName}
+                          <p className="text-sm font-medium truncate" title={doc.file_name}>
+                            {doc.file_name}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {formatFileSize(doc.fileSize)} · Uploaded {formatDate(doc.uploadedAt)}
+                            {formatFileSize(doc.file_size)} · Uploaded {formatDate(doc.uploaded_at)}
                           </p>
                         </div>
                         <div className="flex items-center justify-between">

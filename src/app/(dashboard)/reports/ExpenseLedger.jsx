@@ -77,6 +77,8 @@ export default function ExpenseLedger() {
         return () => { cancelled = true; };
     }, [period, paymentMethod, receiptStatus, coverageState, debouncedSearch]);
 
+    console.log(expenses)
+
     function handlePeriodChange(m, y) {
         setMonth(m);
         setYear(y);
@@ -93,43 +95,72 @@ export default function ExpenseLedger() {
                     label="Period"
                 />
 
-                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <Select
+                    value={paymentMethod}
+                    onValueChange={setPaymentMethod}
+                >
                     <SelectTrigger className="w-[160px] h-9 text-sm">
                         <SelectValue placeholder="Payment Method" />
                     </SelectTrigger>
+
                     <SelectContent>
                         <SelectItem value="">All Methods</SelectItem>
-                        <SelectItem value="credit_card">Credit Card</SelectItem>
-                        <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="credit_card">
+                            Credit Card
+                        </SelectItem>
+                        <SelectItem value="bank_transfer">
+                            Bank Transfer
+                        </SelectItem>
+                        <SelectItem value="cash">
+                            Cash
+                        </SelectItem>
                     </SelectContent>
                 </Select>
 
-                <Select value={receiptStatus} onValueChange={setReceiptStatus}>
+                <Select
+                    value={receiptStatus}
+                    onValueChange={setReceiptStatus}
+                >
                     <SelectTrigger className="w-[140px] h-9 text-sm">
                         <SelectValue placeholder="Receipt" />
                     </SelectTrigger>
+
                     <SelectContent>
                         <SelectItem value="">All</SelectItem>
-                        <SelectItem value="attached">Attached</SelectItem>
-                        <SelectItem value="missing">Missing</SelectItem>
+                        <SelectItem value="attached">
+                            Attached
+                        </SelectItem>
+                        <SelectItem value="missing">
+                            Missing
+                        </SelectItem>
                     </SelectContent>
                 </Select>
 
-                <Select value={coverageState} onValueChange={setCoverageState}>
+                <Select
+                    value={coverageState}
+                    onValueChange={setCoverageState}
+                >
                     <SelectTrigger className="w-[155px] h-9 text-sm">
                         <SelectValue placeholder="Reconciliation" />
                     </SelectTrigger>
+
                     <SelectContent>
                         <SelectItem value="">All</SelectItem>
-                        <SelectItem value="fully_matched">Matched</SelectItem>
-                        <SelectItem value="partially_matched">Partial</SelectItem>
-                        <SelectItem value="unmatched">Unmatched</SelectItem>
+                        <SelectItem value="fully_matched">
+                            Matched
+                        </SelectItem>
+                        <SelectItem value="partially_matched">
+                            Partial
+                        </SelectItem>
+                        <SelectItem value="unmatched">
+                            Unmatched
+                        </SelectItem>
                     </SelectContent>
                 </Select>
 
                 <div className="relative ml-auto">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+
                     <Input
                         placeholder="Search vendor, doc #, description…"
                         value={search}
@@ -156,81 +187,135 @@ export default function ExpenseLedger() {
                             <TableHead>Vendor</TableHead>
                             <TableHead>Category</TableHead>
                             <TableHead>Payment</TableHead>
-                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead className="text-right">
+                                Amount
+                            </TableHead>
                             <TableHead>Receipt</TableHead>
                             <TableHead>Reconciliation</TableHead>
                         </TableRow>
                     </TableHeader>
+
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={7} className="text-center py-12">
+                                <TableCell
+                                    colSpan={7}
+                                    className="text-center py-12"
+                                >
                                     <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
                                 </TableCell>
                             </TableRow>
                         ) : expenses.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground text-sm">
+                                <TableCell
+                                    colSpan={7}
+                                    className="text-center py-12 text-muted-foreground text-sm"
+                                >
                                     No expenses found for this period.
                                 </TableCell>
                             </TableRow>
                         ) : (
                             expenses.map((expense) => {
-                                const MethodIcon = METHOD_ICONS[expense.payment_method];
+                                const MethodIcon =
+                                    METHOD_ICONS[expense.payment_method];
+
                                 return (
                                     <TableRow
-                                        key={expense.id}
+                                        key={expense.expense_id}
                                         className="cursor-pointer hover:bg-muted/50"
-                                        onClick={() => setSelectedExpense(expense)}
+                                        onClick={() =>
+                                            setSelectedExpense(expense)
+                                        }
                                     >
+                                        {/* Date */}
                                         <TableCell className="text-sm text-nowrap">
                                             {expense.document_date
-                                                ? formatDate(expense.document_date)
+                                                ? formatDate(
+                                                    expense.document_date
+                                                )
                                                 : "—"}
                                         </TableCell>
+
+                                        {/* Vendor */}
                                         <TableCell>
-                                            <p className="text-sm font-medium">{expense.vendor_name || "—"}</p>
+                                            <p className="text-sm font-medium">
+                                                {expense.vendor_name || "—"}
+                                            </p>
+
                                             {expense.document_number && (
                                                 <p className="text-xs text-muted-foreground font-mono">
                                                     {expense.document_number}
                                                 </p>
                                             )}
                                         </TableCell>
+
+                                        {/* Category */}
                                         <TableCell>
-                                            {expense.category ? (
-                                                <Badge variant="secondary">{expense.category.name}</Badge>
+                                            {expense.category_name ? (
+                                                <Badge variant="secondary">
+                                                    {expense.category_name}
+                                                </Badge>
                                             ) : (
-                                                <span className="text-xs text-muted-foreground">—</span>
+                                                <span className="text-xs text-muted-foreground">
+                                                    —
+                                                </span>
                                             )}
                                         </TableCell>
+
+                                        {/* Payment */}
                                         <TableCell>
                                             {MethodIcon ? (
                                                 <div className="flex items-center gap-1.5 text-sm text-nowrap">
                                                     <MethodIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                                                    {METHOD_LABELS[expense.payment_method]}
+
+                                                    {METHOD_LABELS[
+                                                        expense.payment_method
+                                                    ]}
                                                 </div>
                                             ) : (
-                                                <span className="text-muted-foreground">—</span>
+                                                <span className="text-muted-foreground">
+                                                    —
+                                                </span>
                                             )}
                                         </TableCell>
+
+                                        {/* Amount */}
                                         <TableCell className="text-right text-sm font-mono text-nowrap">
-                                            {formatCurrency(expense.gross_amount, expense.currency)}
+                                            {formatCurrency(
+                                                expense.gross_amount,
+                                                expense.currency
+                                            )}
                                         </TableCell>
+
+                                        {/* Receipt */}
                                         <TableCell>
-                                            {expense.document ? (
+                                            {expense.linked_document_id ? (
                                                 <Badge variant="success">
                                                     <Receipt className="h-3 w-3 mr-1" />
                                                     Attached
                                                 </Badge>
                                             ) : (
-                                                <Badge variant="outline" className="text-muted-foreground">
+                                                <Badge
+                                                    variant="outline"
+                                                    className="text-muted-foreground"
+                                                >
                                                     Missing
                                                 </Badge>
                                             )}
                                         </TableCell>
+
+                                        {/* Reconciliation */}
                                         <TableCell>
-                                            <Badge variant={COVERAGE_VARIANTS[expense.coverage_state] ?? "outline"}>
-                                                {COVERAGE_LABELS[expense.coverage_state] ?? "—"}
+                                            <Badge
+                                                variant={
+                                                    COVERAGE_VARIANTS[
+                                                    expense.coverage_state
+                                                    ] ?? "outline"
+                                                }
+                                            >
+                                                {COVERAGE_LABELS[
+                                                    expense.coverage_state
+                                                ] ?? "—"}
                                             </Badge>
                                         </TableCell>
                                     </TableRow>
@@ -241,12 +326,15 @@ export default function ExpenseLedger() {
                 </Table>
             </div>
 
+            {/* Record count */}
             {expenses.length > 0 && !loading && (
                 <p className="text-xs text-muted-foreground text-right">
-                    {expenses.length} record{expenses.length !== 1 ? "s" : ""}
+                    {expenses.length} record
+                    {expenses.length !== 1 ? "s" : ""}
                 </p>
             )}
 
+            {/* Expense drawer */}
             <ExpenseDrawer
                 expense={selectedExpense}
                 open={!!selectedExpense}
