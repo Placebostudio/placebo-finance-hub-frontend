@@ -65,6 +65,7 @@ export default function ExpenseLedger() {
                     coverage_state: coverageState || undefined,
                     search: debouncedSearch || undefined,
                 });
+
                 if (!cancelled) setExpenses(data);
             } catch (err) {
                 if (!cancelled) setError(err.message);

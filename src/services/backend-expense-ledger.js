@@ -38,6 +38,6 @@ export const expenseLedgerRepository = {
             throw new Error(data.error || "Failed to load expense ledger");
         }
 
-        return data.expenses ?? [];
+        return data;
     }
 };
