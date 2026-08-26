@@ -80,18 +80,54 @@ export async function fetchFxRates() {
  * @param {{ rates: Record<string, number> } | null} fxData
  * @returns {number | null}
  */
+// export function convertCurrency(amount, fromCurrency, toCurrency, fxData) {
+//   if (fxData == null || typeof fxData.rates !== 'object') return null;
+//   if (fromCurrency === toCurrency) return amount;
+
+//   const { rates } = fxData;
+
+//   // EUR is the implicit base (rate = 1.0)
+//   const fromRate = fromCurrency === 'EUR' ? 1 : rates[fromCurrency];
+//   const toRate   = toCurrency   === 'EUR' ? 1 : rates[toCurrency];
+
+//   if (fromRate == null || toRate == null) return null;
+
+//   // amount in fromCurrency → EUR → toCurrency
+//   return (amount / fromRate) * toRate;
+// }
+
 export function convertCurrency(amount, fromCurrency, toCurrency, fxData) {
-  if (fxData == null || typeof fxData.rates !== 'object') return null;
-  if (fromCurrency === toCurrency) return amount;
+  if (!Array.isArray(fxData)) return null;
 
-  const { rates } = fxData;
+  if (fromCurrency === toCurrency) {
+    return Number(amount);
+  }
 
-  // EUR is the implicit base (rate = 1.0)
-  const fromRate = fromCurrency === 'EUR' ? 1 : rates[fromCurrency];
-  const toRate   = toCurrency   === 'EUR' ? 1 : rates[toCurrency];
+  const fromRate =
+    fromCurrency === "EUR"
+      ? 1
+      : fxData.find(
+          (r) =>
+            r.base === "EUR" &&
+            r.quote === fromCurrency
+        )?.rate;
 
-  if (fromRate == null || toRate == null) return null;
+  const toRate =
+    toCurrency === "EUR"
+      ? 1
+      : fxData.find(
+          (r) =>
+            r.base === "EUR" &&
+            r.quote === toCurrency
+        )?.rate;
 
-  // amount in fromCurrency → EUR → toCurrency
-  return (amount / fromRate) * toRate;
+  if (fromRate == null || toRate == null) {
+    return null;
+  }
+
+  // fromCurrency → EUR → toCurrency
+  return (
+    (Number(amount) / Number(fromRate)) *
+    Number(toRate)
+  );
 }

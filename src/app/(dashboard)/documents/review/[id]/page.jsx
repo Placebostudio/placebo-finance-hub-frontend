@@ -154,10 +154,6 @@ function formFromExtraction(fields, categories = []) {
   // 1. VAT rate extracted from document
   // 2. Default VAT rate for detected country
   // 3. Empty
-  console.log("Country:", country);
-  console.log("Country code:", countryCode);
-  console.log("Extracted VAT:", extractedVatRate);
-  console.log("Country VAT:", countryVatRate);
 
   const vatRate =
     extractedVatRate != null
@@ -256,7 +252,6 @@ export default function ReviewPage() {
       setCategories(categoryData);
 
       const currencies = await currencyRepository.getAll();
-      console.log(currencies);
       setCurrencies(currencies);
 
       const extraction =
@@ -437,7 +432,6 @@ export default function ReviewPage() {
 
   const save = async (status) => {
     setSaving(true);
-    console.log(form);
 
     try {
       const expenseData = {

@@ -78,8 +78,6 @@ export default function ExpenseLedger() {
         return () => { cancelled = true; };
     }, [period, paymentMethod, receiptStatus, coverageState, debouncedSearch]);
 
-    console.log(expenses)
-
     function handlePeriodChange(m, y) {
         setMonth(m);
         setYear(y);
