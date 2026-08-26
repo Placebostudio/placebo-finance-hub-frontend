@@ -481,63 +481,34 @@ export default function ReviewPage() {
         await expenseRepository.getByDocumentId(id);
 
       let expense;
-      let before = null;
 
       if (existingExpense) {
-        // Keep the original state for the audit log
-        before = existingExpense;
-
-        // Existing expense → update it
+        // Existing expense → update it.
+        // The repository handles the audit log.
         expense = await expenseRepository.update(
           existingExpense.id,
           expenseData
         );
       } else {
-        // No expense yet → create it
-        expense = await expenseRepository.create(expenseData);
+        // No expense yet → create it.
+        // The repository handles the audit log.
+        expense = await expenseRepository.create(
+          expenseData
+        );
       }
-
-      // Audit the expense operation
-      await auditRepository.create({
-        action: existingExpense ? "update" : "create",
-        entity_type: "expense",
-        entity_id: expense.id,
-        before,
-        after: expense,
-        details: {
-          document_id: id,
-          status,
-        },
-      });
 
       // ------------------------------------------------------------
       // APPROVING THE EXPENSE ALSO APPROVES THE RELATED DOCUMENT
       // ------------------------------------------------------------
 
       if (status === "approved") {
-        // Get the current document state before changing it
-        const document =
-          await documentRepository.getById(id);
-
-        if (document) {
-          const documentAfter =
-            await documentRepository.update(id, {
-              status: "approved",
-            });
-
-          // Audit the document status change
-          await auditRepository.create({
-            action: "update",
-            entity_type: "document",
-            entity_id: id,
-            before: document,
-            after: documentAfter,
-            details: {
-              expense_id: expense.id,
-              status: "approved",
-            },
-          });
-        }
+        // The document repository handles:
+        // 1. Getting the before state
+        // 2. Updating the document
+        // 3. Creating the document audit log
+        await documentRepository.update(id, {
+          status: "approved",
+        });
       }
 
       toast.success(

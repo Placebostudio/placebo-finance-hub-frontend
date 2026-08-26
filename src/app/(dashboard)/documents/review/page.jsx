@@ -57,38 +57,22 @@ export default function ReviewQueuePage() {
         // Owner → permanent delete
         await documentRepository.delete(id);
 
-        await auditRepository.create({
-          action: "delete",
-          entity_type: "document",
-          entity_id: id,
-          details: {
-            before: doc,
-            after: null,
-          },
-        });
-
         toast.success("Document permanently deleted");
       } else {
         // Everyone else → soft delete
-        const updatedDoc = await documentRepository.softDelete(id);
-
-        await auditRepository.create({
-          action: "soft_delete",
-          entity_type: "document",
-          entity_id: id,
-          details: {
-            before: doc,
-            after: updatedDoc,
-          },
-        });
+        await documentRepository.softDelete(id);
 
         toast.success("Document removed from queue");
       }
 
-      load();
+      await load();
+
     } catch (err) {
       console.error("Failed to delete document:", err);
-      toast.error(err.message || "Failed to delete document");
+
+      toast.error(
+        err.message || "Failed to delete document"
+      );
     }
   }
 

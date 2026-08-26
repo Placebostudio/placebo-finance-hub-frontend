@@ -161,7 +161,6 @@ export default function UploadPage() {
             30 +
             Math.round(percent * 0.65);
 
-
           setQueue((q) =>
             q.map((i) =>
               i.id === queueId
@@ -197,27 +196,16 @@ export default function UploadPage() {
       }
 
 
-      // ==========================================================
-      // NORMALIZE OCR RESULT
-      //
-      // Your table expects:
-      //
-      // fields              JSONB NOT NULL
-      // validation_issues   JSONB NOT NULL
-      // full_text           TEXT
-      // confidence         NUMERIC
-      // duration_ms         INTEGER
-      // is_current          BOOLEAN
-      // spam                BOOLEAN
-      // ==========================================================
-
       // ============================================================
       // PHASE 3 — CREATE DOCUMENT EXTRACTION
+      //
+      // documentExtractionRepository.create() now handles
+      // the audit log automatically.
       // ============================================================
 
-      const extraction = await documentExtractionRepository.create({
+      await documentExtractionRepository.create({
         document_id: doc.id,
-        method: result.method,
+        method: result.method ?? method,
         fields: result.fields,
         validation_issues: result.validationIssues ?? [],
         full_text: result.fullText ?? null,
@@ -226,50 +214,6 @@ export default function UploadPage() {
         is_current: true,
         spam: false
       });
-
-
-      // ============================================================
-      // AUDIT LOG — DOCUMENT EXTRACTION
-      //
-      // document_extractions has no id column.
-      //
-      // Therefore the document UUID is used as the audit
-      // entity_id for the extraction event.
-      // ============================================================
-
-      const currentUser =
-        userRepository.getLoggedInUser();
-
-
-      if (currentUser) {
-
-        await auditRepository.create({
-
-          actor_id:
-            currentUser.id,
-
-          action:
-            "create",
-
-          entity_type:
-            "document_extraction",
-
-          entity_id:
-            doc.id,
-
-          before:
-            null,
-
-          after:
-            extraction,
-
-          ip_address:
-            null,
-
-          user_agent:
-            navigator.userAgent
-        });
-      }
 
 
       // ============================================================
@@ -307,8 +251,7 @@ export default function UploadPage() {
       // The document remains in documents.
       //
       // No document_extractions row is created because
-      // you specified that extraction should only be recorded
-      // when OCR actually happens successfully.
+      // extraction should only be recorded when OCR succeeds.
       // ============================================================
 
       setQueue((q) =>
@@ -350,11 +293,9 @@ export default function UploadPage() {
         return true;
       });
 
-
       if (valid.length === 0) {
         return;
       }
-
 
       // ============================================================
       // CREATE QUEUE ITEMS
@@ -367,12 +308,10 @@ export default function UploadPage() {
             .toString(36)
             .substring(2);
 
-
         const preview =
           f.type.startsWith("image/")
             ? URL.createObjectURL(f)
             : null;
-
 
         return {
           id,
@@ -385,7 +324,6 @@ export default function UploadPage() {
         };
       });
 
-
       // ============================================================
       // ADD TO QUEUE
       // ============================================================
@@ -395,13 +333,11 @@ export default function UploadPage() {
         ...newItems
       ]);
 
-
       // ============================================================
       // PROCESS FILES SEQUENTIALLY
       // ============================================================
 
       for (const item of newItems) {
-
         await processFile(
           item.file,
           item.id

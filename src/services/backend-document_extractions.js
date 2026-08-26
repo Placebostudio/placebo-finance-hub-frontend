@@ -1,3 +1,5 @@
+import { auditRepository } from "@/services/backend-audits";
+
 const BASE_URL =
     `${process.env.NEXT_PUBLIC_API_URL}/api/document_extractions`;
 
@@ -80,6 +82,36 @@ export const documentExtractionRepository = {
 
     async create(data) {
 
+        const extractionData = {
+            document_id:
+                data.document_id,
+
+            method:
+                data.method,
+
+            fields:
+                data.fields ?? {},
+
+            validation_issues:
+                data.validation_issues ?? [],
+
+            full_text:
+                data.full_text ?? null,
+
+            confidence:
+                data.confidence ?? null,
+
+            duration_ms:
+                data.duration_ms ?? null,
+
+            is_current:
+                data.is_current ?? true,
+
+            spam:
+                data.spam ?? false
+        };
+
+
         const response = await fetch(
             BASE_URL,
             {
@@ -89,34 +121,7 @@ export const documentExtractionRepository = {
                     "Content-Type": "application/json"
                 },
 
-                body: JSON.stringify({
-                    document_id:
-                        data.document_id,
-
-                    method:
-                        data.method,
-
-                    fields:
-                        data.fields ?? {},
-
-                    validation_issues:
-                        data.validation_issues ?? [],
-
-                    full_text:
-                        data.full_text ?? null,
-
-                    confidence:
-                        data.confidence ?? null,
-
-                    duration_ms:
-                        data.duration_ms ?? null,
-
-                    is_current:
-                        data.is_current ?? true,
-
-                    spam:
-                        data.spam ?? false
-                })
+                body: JSON.stringify(extractionData)
             }
         );
 
@@ -129,7 +134,31 @@ export const documentExtractionRepository = {
             );
         }
 
-        return result.extraction ?? result;
+        const extraction =
+            result.extraction ?? result;
+
+
+        // ========================================================
+        // AUDIT
+        // ========================================================
+
+        await auditRepository.create({
+            action: "create",
+            entity_type: "document_extraction",
+            entity_id: data.document_id,
+
+            before: null,
+
+            after: extraction,
+
+            details: {
+                document_id: data.document_id,
+                method: data.method
+            }
+        });
+
+
+        return extraction;
     },
 
 
@@ -168,10 +197,31 @@ export const documentExtractionRepository = {
             );
         }
 
+        const extraction =
+            result.extraction ?? result;
+
+
+        // ========================================================
+        // AUDIT
+        // ========================================================
+
+        await auditRepository.create({
+            action: "update",
+            entity_type: "document_extraction",
+            entity_id: documentId,
+
+            before,
+            after: extraction,
+
+            details: {
+                document_id: documentId
+            }
+        });
+
+
         return {
             before,
-            extraction:
-                result.extraction ?? result
+            extraction
         };
     },
 
@@ -213,10 +263,32 @@ export const documentExtractionRepository = {
             );
         }
 
+        const extraction =
+            result.extraction ?? result;
+
+
+        // ========================================================
+        // AUDIT
+        // ========================================================
+
+        await auditRepository.create({
+            action: "soft_delete",
+            entity_type: "document_extraction",
+            entity_id: documentId,
+
+            before,
+            after: extraction,
+
+            details: {
+                document_id: documentId,
+                reason: "marked as spam"
+            }
+        });
+
+
         return {
             before,
-            extraction:
-                result.extraction ?? result
+            extraction
         };
     },
 
@@ -248,6 +320,26 @@ export const documentExtractionRepository = {
                 "Failed to delete document extraction"
             );
         }
+
+
+        // ========================================================
+        // AUDIT
+        // ========================================================
+
+        await auditRepository.create({
+            action: "delete",
+            entity_type: "document_extraction",
+            entity_id: documentId,
+
+            before,
+            after: null,
+
+            details: {
+                document_id: documentId,
+                permanent: true
+            }
+        });
+
 
         return {
             before,

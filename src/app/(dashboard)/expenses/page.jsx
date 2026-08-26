@@ -286,41 +286,20 @@ export default function ExpensesPage() {
       if (currentUser?.role === "owner") {
         await expenseRepository.delete(id);
 
-        await auditRepository.create({
-          actor_id: currentUser.id,
-          action: "delete",
-          entity_type: "expense",
-          entity_id: id,
-          details: {
-            before: exp,
-            after: null,
-          },
-        });
-
         toast.success("Expense permanently deleted");
       } else {
-        const updatedExpense =
-          await expenseRepository.update(id, {
-            spam: true,
-          });
-
-        await auditRepository.create({
-          actor_id: currentUser?.id,
-          action: "soft_delete",
-          entity_type: "expense",
-          entity_id: id,
-          details: {
-            before: exp,
-            after: updatedExpense,
-          },
+        await expenseRepository.update(id, {
+          spam: true,
         });
 
         toast.success("Expense deleted");
       }
 
       await load();
+
     } catch (err) {
       console.error(err);
+
       toast.error(
         err.message || "Failed to delete expense"
       );

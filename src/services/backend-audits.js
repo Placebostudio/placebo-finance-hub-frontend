@@ -68,9 +68,20 @@ export const auditRepository = {
     // ============================================================
     // CREATE AUDIT LOG
     // POST /api/audit_logs
+    //
+    // Audit logs CANNOT themselves be audited.
     // ============================================================
 
     async create(data) {
+
+        if (
+            data?.entity_type === "audit_log" ||
+            data?.entityType === "audit_log"
+        ) {
+            throw new Error(
+                "Audit logs cannot have audit logs"
+            );
+        }
 
         const response = await fetch(BASE_URL, {
             method: "POST",

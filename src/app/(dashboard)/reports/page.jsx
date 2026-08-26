@@ -18,7 +18,7 @@ import ExpenseLedger from "./ExpenseLedger";
 
 import { expenseRepository } from "@/services/backend-expenses";
 import { expenseLedgerRepository } from "@/services/backend-expense-ledger";
-import { transactionRepository } from "@/services/backend-transaction";
+import { transactionRepository } from "@/services/backend-transactions";
 
 function StatRow({ label, value, sub }) {
   return (

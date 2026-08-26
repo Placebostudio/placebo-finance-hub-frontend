@@ -21,28 +21,30 @@ import { APP_CONFIG } from "@/config";
 import { calculateFromGross } from "@/lib/utils";
 import { toast } from "sonner";
 import Link from "next/link";
+import { documentRepository } from "@/services/backend-documents";
+import { expenseRepository } from "@/services/backend-expenses";
 
 /** Build editable form state from a persisted expense record */
 function formFromExpense(expense) {
   return {
-    vendorName:     expense.vendorName     ?? "",
-    documentType:   expense.documentType   ?? "receipt",
+    vendorName: expense.vendorName ?? "",
+    documentType: expense.documentType ?? "receipt",
     documentNumber: expense.documentNumber ?? "",
-    documentDate:   expense.documentDate   ?? "",
-    dueDate:        expense.dueDate        ?? "",
-    currency:       expense.currency       ?? "ILS",
-    country:        expense.country        ?? "",
+    documentDate: expense.documentDate ?? "",
+    dueDate: expense.dueDate ?? "",
+    currency: expense.currency ?? "ILS",
+    country: expense.country ?? "",
     // Show 0-rate as blank so it reads as "not set"
-    vatRate:        expense.vatRate != null && expense.vatRate !== 0
-                      ? String(expense.vatRate)
-                      : "",
-    grossAmount:    expense.grossAmount != null ? String(expense.grossAmount) : "",
-    netAmount:      expense.netAmount  != null ? String(expense.netAmount)  : "",
-    vatAmount:      expense.vatAmount  != null ? String(expense.vatAmount)  : "",
-    category:       expense.category       ?? "",
-    paymentMethod:  expense.paymentMethod  ?? "unknown",
-    cardLastFour:   expense.cardLastFour   ?? "",
-    notes:          expense.notes          ?? "",
+    vatRate: expense.vatRate != null && expense.vatRate !== 0
+      ? String(expense.vatRate)
+      : "",
+    grossAmount: expense.grossAmount != null ? String(expense.grossAmount) : "",
+    netAmount: expense.netAmount != null ? String(expense.netAmount) : "",
+    vatAmount: expense.vatAmount != null ? String(expense.vatAmount) : "",
+    category: expense.category ?? "",
+    paymentMethod: expense.paymentMethod ?? "unknown",
+    cardLastFour: expense.cardLastFour ?? "",
+    notes: expense.notes ?? "",
   };
 }
 
@@ -57,34 +59,36 @@ function Field({ label, children }) {
 
 export default function EditDocumentPage() {
   const router = useRouter();
-  const params  = useParams();
-  const docId   = params?.id;
+  const params = useParams();
+  const docId = params?.id;
 
-  const [doc, setDoc]                   = useState(null);
-  const [expense, setExpense]           = useState(null);
-  const [fileUrl, setFileUrl]           = useState(null);
-  const [form, setForm]                 = useState(null);
+  const [doc, setDoc] = useState(null);
+  const [expense, setExpense] = useState(null);
+  const [fileUrl, setFileUrl] = useState(null);
+  const [form, setForm] = useState(null);
   const [originalForm, setOriginalForm] = useState(null); // snapshot for cancel
-  const [saving, setSaving]             = useState(false);
-  const [notFound, setNotFound]         = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notFound, setNotFound] = useState(false);
   const [reconWarning, setReconWarning] = useState(null);
 
   useEffect(() => {
     if (!docId) return;
+    async function load() {
+      const d = await documentRepository.getById(docId);
+      if (!d) { setNotFound(true); return; }
+      setDoc(d);
 
-    const d = documentService.getById(docId);
-    if (!d) { setNotFound(true); return; }
-    setDoc(d);
-
-    const exp = expenseService.getByDocumentId(docId);
-    if (!exp) { setNotFound(true); return; }
-    setExpense(exp);
+      const exp = await expenseRepository.getByDocumentId(docId);
+      if (!exp) { setNotFound(true); return; }
+      setExpense(exp);
+    }
+    load();
 
     const initial = formFromExpense(exp);
     setForm(initial);
     setOriginalForm(initial);
 
-    
+
   }, [docId]);
 
   useEffect(() => () => { if (fileUrl) URL.revokeObjectURL(fileUrl); }, [fileUrl]);
@@ -116,40 +120,78 @@ export default function EditDocumentPage() {
 
   const handleSave = async () => {
     if (!expense) return;
+
     setSaving(true);
+
     try {
       const updatedData = {
-        vendorName:     form.vendorName,
-        documentType:   form.documentType,
-        documentNumber: form.documentNumber,
-        documentDate:   form.documentDate,
-        dueDate:        form.dueDate,
-        currency:       form.currency,
-        country:        form.country,
-        vatRate:        parseFloat(form.vatRate)     || 0,
-        grossAmount:    parseFloat(form.grossAmount) || 0,
-        netAmount:      parseFloat(form.netAmount)   || 0,
-        vatAmount:      parseFloat(form.vatAmount)   || 0,
-        category:       form.category,
-        paymentMethod:  form.paymentMethod,
-        cardLastFour:   form.cardLastFour,
-        notes:          form.notes,
+        vendor_name: form.vendorName,
+        document_type: form.documentType,
+        document_number: form.documentNumber || null,
+        document_date: form.documentDate,
+        due_date: form.dueDate || null,
+
+        currency: form.currency,
+        country_code: countryNameToCode(form.country),
+
+        vat_rate:
+          form.vatRate !== ""
+            ? parseFloat(form.vatRate)
+            : null,
+
+        gross_amount:
+          form.grossAmount !== ""
+            ? parseFloat(form.grossAmount)
+            : null,
+
+        net_amount:
+          form.netAmount !== ""
+            ? parseFloat(form.netAmount)
+            : null,
+
+        vat_amount:
+          form.vatAmount !== ""
+            ? parseFloat(form.vatAmount)
+            : null,
+
+        category_id: form.category_id,
+
+        payment_method: form.paymentMethod,
+
+        card_last_four:
+          form.cardLastFour || null,
+
+        notes:
+          form.notes || null,
       };
 
-      // Persist expense changes
-      const updated = expenseService.update(expense.id, updatedData);
+      // Persist expense changes.
+      // The repository handles the audit log.
+      const updated =
+        await expenseRepository.update(
+          expense.id,
+          updatedData
+        );
+
       setExpense(updated);
 
-      // Touch document updatedAt so lists show fresh timestamp
-      documentService.update(docId, {});
+      // Touch document updated_at so lists show fresh timestamp.
+      // The repository handles the audit log.
+      await documentRepository.update(docId, {});
 
       // Re-validate any confirmed reconciliation match
-      const recon = reconciliationService.revalidateMatchAfterExpenseEdit(expense.id, updated);
+      const recon =
+        await reconciliationService.revalidateMatchAfterExpenseEdit(
+          expense.id,
+          updated
+        );
 
       if (recon.action === "removed") {
         setReconWarning(recon.invalidReason);
+
         toast.warning(
-          "Saved. Reconciliation match removed — " + recon.invalidReason +
+          "Saved. Reconciliation match removed — " +
+          recon.invalidReason +
           ". Open Reconciliation to re-match."
         );
       } else {
@@ -157,8 +199,22 @@ export default function EditDocumentPage() {
         toast.success("Changes saved");
       }
 
-      // Update the snapshot so a subsequent Cancel won't revert past this save
-      setOriginalForm(formFromExpense(updated));
+      // Update snapshot so a subsequent Cancel
+      // won't revert past this save
+      setOriginalForm(
+        formFromExpense(updated)
+      );
+
+    } catch (err) {
+      console.error(
+        "Failed to save expense:",
+        err
+      );
+
+      toast.error(
+        err.message || "Failed to save changes"
+      );
+
     } finally {
       setSaving(false);
     }
@@ -178,9 +234,9 @@ export default function EditDocumentPage() {
   if (!doc || !form) return null;
 
   const liveGross = parseFloat(form.grossAmount) || 0;
-  const liveNet   = parseFloat(form.netAmount)   || 0;
-  const liveVat   = parseFloat(form.vatAmount)   || 0;
-  const liveSum   = Math.round((liveNet + liveVat) * 100) / 100;
+  const liveNet = parseFloat(form.netAmount) || 0;
+  const liveVat = parseFloat(form.vatAmount) || 0;
+  const liveSum = Math.round((liveNet + liveVat) * 100) / 100;
   const liveAmountMismatch =
     liveGross > 0 && liveNet > 0 && liveVat > 0 &&
     Math.abs(liveSum - liveGross) > Math.max(0.05, liveGross * 0.005);

@@ -14,7 +14,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 
 import { documentRepository } from "@/services/backend-documents";
 import { expenseRepository } from "@/services/backend-expenses";
-import { transactionRepository } from "@/services/backend-transaction";
+import { transactionRepository } from "@/services/backend-transactions";
 
 
 function StatCard({ icon: Icon, label, value, color, href }) {

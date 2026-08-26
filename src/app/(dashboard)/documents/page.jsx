@@ -134,10 +134,7 @@ export default function DocumentsPage() {
   }).length;
 
   async function handleDelete(id) {
-
     if (!confirm("Delete this document?")) return;
-
-    const doc = documents.find((d) => d.id === id);
 
     try {
 
@@ -145,33 +142,11 @@ export default function DocumentsPage() {
 
         await documentRepository.delete(id);
 
-        await auditRepository.create({
-          actorId: currentUser.id,
-          actorName: currentUser.fullName,
-          action: "delete",
-          entityType: "document",
-          entityId: id,
-          entityName: doc?.file_name ?? doc?.fileName ?? id,
-          before: doc,
-          after: null,
-        });
-
         toast.success("Document permanently deleted");
 
       } else {
 
         await documentRepository.softDelete(id);
-
-        await auditRepository.create({
-          actorId: currentUser?.id,
-          actorName: currentUser?.fullName,
-          action: "soft_delete",
-          entityType: "document",
-          entityId: id,
-          entityName: doc?.file_name ?? doc?.fileName ?? id,
-          before: doc,
-          after: null,
-        });
 
         toast.success("Document deleted");
       }

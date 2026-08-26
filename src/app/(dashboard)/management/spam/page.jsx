@@ -23,29 +23,38 @@ import { useOwnerGuard } from "@/hooks/use-owner-guard";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { toast } from "sonner";
 
+
+import { documentRepository } from "@/services/backend-documents";
+import { expenseRepository } from "@/services/backend-expenses";
+import { statementRepository } from "@/services/backend-statements";
+import { transactionRepository } from "@/services/backend-transactions";
+import { auditRepository } from "@/services/backend-audits";
+import { vendorRepository } from "@/services/backend-vendors";
+import { categoryRepository } from "@/services/backend-categories";
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 const ENTITY_TYPE_LABELS = {
-  document:  "Document",
-  expense:   "Expense",
+  document: "Document",
+  expense: "Expense",
   statement: "Statement",
 };
 
 const ENTITY_TYPE_ICONS = {
-  document:  FileText,
-  expense:   Receipt,
+  document: FileText,
+  expense: Receipt,
   statement: CreditCard,
 };
 
 const ENTITY_TYPE_VARIANTS = {
-  document:  "secondary",
-  expense:   "default",
+  document: "secondary",
+  expense: "default",
   statement: "outline",
 };
 
 function entityLabel(item) {
-  if (item._entityType === "document")  return item.fileName ?? item.id;
-  if (item._entityType === "expense")   return item.vendorName || item.documentNumber || item.id;
+  if (item._entityType === "document") return item.fileName ?? item.id;
+  if (item._entityType === "expense") return item.vendorName || item.documentNumber || item.id;
   if (item._entityType === "statement") return item.fileName || item.period || item.id;
   return item.id;
 }
@@ -76,14 +85,60 @@ function entityDetails(item) {
 
 // ── gather all soft-deleted entities ─────────────────────────────────────────
 
-function loadSpamItems() {
-  const docs  = documentService.getAllDeleted().map((d) => ({ ...d, _entityType: "document" }));
-  const exps  = expenseService.getAllDeleted().map((e)  => ({ ...e, _entityType: "expense" }));
-  const stmts = statementService.getAllDeleted().map((s) => ({ ...s, _entityType: "statement" }));
-  const all   = [...docs, ...exps, ...stmts];
-  // Sort by deletedAt descending (most recent first)
-  all.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
-  return all;
+async function loadSpamItems() {
+  try {
+    const [docs, exps, stmts] = await Promise.all([
+      documentRepository.getAll({ spam: true }),
+      expenseRepository.getAll({ spam: true }),
+      statementRepository.getAll({ spam: true }),
+    ]);
+
+    const all = [
+      ...(docs ?? []).map((d) => ({
+        ...d,
+        _entityType: "document",
+      })),
+
+      ...(exps ?? []).map((e) => ({
+        ...e,
+        _entityType: "expense",
+      })),
+
+      ...(stmts ?? []).map((s) => ({
+        ...s,
+        _entityType: "statement",
+      })),
+    ];
+
+    // Most recently deleted first
+    all.sort((a, b) => {
+      const dateA =
+        a.deleted_at ??
+        a.deletedAt ??
+        a.updated_at ??
+        a.updatedAt ??
+        0;
+
+      const dateB =
+        b.deleted_at ??
+        b.deletedAt ??
+        b.updated_at ??
+        b.updatedAt ??
+        0;
+
+      return new Date(dateB) - new Date(dateA);
+    });
+
+    return all;
+
+  } catch (err) {
+    console.error(
+      "Failed to load spam items:",
+      err
+    );
+
+    throw err;
+  }
 }
 
 // ── SpamCard ──────────────────────────────────────────────────────────────────
@@ -126,9 +181,9 @@ function SpamCard({ item, onRestore, onPermanentDelete }) {
               {" · "}
               {item.deletedAt
                 ? new Date(item.deletedAt).toLocaleString("en-GB", {
-                    year: "numeric", month: "short", day: "numeric",
-                    hour: "2-digit", minute: "2-digit",
-                  })
+                  year: "numeric", month: "short", day: "numeric",
+                  hour: "2-digit", minute: "2-digit",
+                })
                 : "—"}
             </p>
           </div>
@@ -172,8 +227,8 @@ export default function SpamPage() {
   const [restoreTarget, setRestoreTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  function load() {
-    setItems(loadSpamItems());
+  async function load() {
+    setItems(await loadSpamItems());
   }
 
   useEffect(() => {
@@ -196,12 +251,13 @@ export default function SpamPage() {
 
   // ── filtering ───────────────────────────────────────────────────────────────
 
+  console.log(items)
   const filtered = items.filter((item) => {
-    if (typeFilter !== "all" && item._entityType !== typeFilter) return false;
+    if (typeFilter !== "all" && item.entity_type !== typeFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       const label = entityLabel(item).toLowerCase();
-      const deletedBy = (item.deletedByName ?? "").toLowerCase();
+      // const deletedBy = (item.deletedByName ?? "").toLowerCase();
       if (!label.includes(q) && !deletedBy.includes(q)) return false;
     }
     return true;
@@ -209,27 +265,64 @@ export default function SpamPage() {
 
   // ── restore ─────────────────────────────────────────────────────────────────
 
-  function confirmRestore() {
+  async function confirmRestore() {
     const item = restoreTarget;
     if (!item) return;
 
     if (item._entityType === "document") {
-      documentService.restore(item.id);
-    } else if (item._entityType === "expense") {
-      expenseService.restore(item.id);
-    } else if (item._entityType === "statement") {
-      statementService.restore(item.id);
-    }
 
-    auditService.log({
-      actorId:    currentUser.id,
-      actorName:  currentUser.fullName,
-      action:     "restore",
+      await documentRepository.update(item.id, {
+        spam: false,
+      });
+
+    } else if (item._entityType === "expense") {
+
+      await expenseRepository.update(item.id, {
+        spam: false,
+      });
+
+    } else if (item._entityType === "statement") {
+
+      await statementRepository.update(item.id, {
+        spam: false,
+      });
+
+    } else if (item._entityType === "vendor") {
+
+      await vendorRepository.update(item.id, {
+        spam: false,
+      });
+
+    } else if (item._entityType === "category") {
+
+      await categoryRepository.update(item.id, {
+        spam: false,
+      });
+
+    } else if (item._entityType === "transaction") {
+
+      await transactionRepository.update(item.id, {
+        spam: false,
+      });
+
+    }
+    // else if (item._entityType === "reconciliation") {
+
+    //   await reconciliationRepository.update(item.id, {
+    //     spam: false,
+    //   });
+
+    // }
+
+    auditRepository.create({
+      actorId: currentUser.id,
+      actorName: currentUser.fullName,
+      action: "restore",
       entityType: item._entityType,
-      entityId:   item.id,
+      entityId: item.id,
       entityName: entityLabel(item),
-      before:     item,
-      after:      { ...item, deletedAt: null, deletedBy: null, deletedByName: null },
+      before: item,
+      after: { ...item, deletedAt: null, deletedBy: null, deletedByName: null },
     });
 
     toast.success(`${ENTITY_TYPE_LABELS[item._entityType] ?? "Item"} restored`);
@@ -245,24 +338,42 @@ export default function SpamPage() {
 
     try {
       if (item._entityType === "document") {
-        await documentService.hardDelete(item.id);
+
+        await documentRepository.delete(item.id);
+
       } else if (item._entityType === "expense") {
-        expenseService.hardDelete(item.id);
+
+        await expenseRepository.delete(item.id);
+
       } else if (item._entityType === "statement") {
+
         // Delete linked transactions first
-        transactionService.deleteByStatement(item.id);
-        await statementService.hardDelete(item.id);
+        await transactionRepository.deleteByStatement(item.id);
+
+        await statementRepository.delete(item.id);
+
+      } else if (item._entityType === "vendor") {
+
+        await vendorRepository.delete(item.id);
+
+      } else if (item._entityType === "category") {
+
+        await categoryRepository.delete(item.id);
+
+      } else if (item._entityType === "transaction") {
+
+        await transactionRepository.delete(item.id);
       }
 
-      auditService.log({
-        actorId:    currentUser.id,
-        actorName:  currentUser.fullName,
-        action:     "permanent_delete",
+      auditRepository.create({
+        actorId: currentUser.id,
+        actorName: currentUser.fullName,
+        action: "permanent_delete",
         entityType: item._entityType,
-        entityId:   item.id,
+        entityId: item.id,
         entityName: entityLabel(item),
-        before:     item,
-        after:      null,
+        before: item,
+        after: null,
       });
 
       toast.success(`${ENTITY_TYPE_LABELS[item._entityType] ?? "Item"} permanently deleted`);
