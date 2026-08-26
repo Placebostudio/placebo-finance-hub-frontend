@@ -15,21 +15,22 @@ import { auditService } from "@/services/audit.service";
 import { useOwnerGuard } from "@/hooks/use-owner-guard";
 
 import { auditRepository } from "@/services/backend-audits";
+import { userRepository } from "@/services/backend-users";
 
 const ACTION_LABELS = {
-  create:                 { label: "Created",            variant: "success" },
-  update:                 { label: "Updated",            variant: "secondary" },
-  delete:                 { label: "Deleted",            variant: "destructive" },
-  soft_delete:  { label: "Delete Requested",   variant: "warning" },
-  restore:                { label: "Restored",           variant: "default" },
-  permanent_delete:       { label: "Permanently Deleted", variant: "destructive" },
+  create: { label: "Created", variant: "success" },
+  update: { label: "Updated", variant: "secondary" },
+  delete: { label: "Deleted", variant: "destructive" },
+  soft_delete: { label: "Delete Requested", variant: "warning" },
+  restore: { label: "Restored", variant: "default" },
+  permanent_delete: { label: "Permanently Deleted", variant: "destructive" },
 };
 
 const ENTITY_ICONS = {
-  document:   FileText,
-  expense:    Receipt,
-  statement:  CreditCard,
-  user:       Users,
+  document: FileText,
+  expense: Receipt,
+  statement: CreditCard,
+  user: Users,
 };
 
 function ActionBadge({ action }) {
@@ -44,7 +45,29 @@ function EntityIcon({ type }) {
 
 function AuditRow({ entry }) {
   const [expanded, setExpanded] = useState(false);
+  const [actorName, setActorName] = useState("Unknown");
+
   const hasDiff = entry.before || entry.after;
+
+  useEffect(() => {
+    async function loadActor() {
+      if (!entry.actor_id) {
+        setActorName("Unknown");
+        return;
+      }
+
+      try {
+        const user = await userRepository.getById(entry.actor_id);
+
+        setActorName(user?.full_name ?? "Unknown");
+      } catch (err) {
+        console.error("Failed to load audit actor:", err);
+        setActorName("Unknown");
+      }
+    }
+
+    loadActor();
+  }, [entry.actor_id]);
 
   return (
     <>
@@ -53,52 +76,79 @@ function AuditRow({ entry }) {
         onClick={hasDiff ? () => setExpanded((p) => !p) : undefined}
       >
         <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-          {new Date(entry.timestamp).toLocaleString("en-GB", {
-            year: "numeric", month: "short", day: "numeric",
-            hour: "2-digit", minute: "2-digit",
+          {new Date(entry.created_at).toLocaleString("en-GB", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
           })}
         </TableCell>
+
         <TableCell>
           <ActionBadge action={entry.action} />
         </TableCell>
+
         <TableCell>
           <div className="flex items-center gap-1.5">
-            <EntityIcon type={entry.entityType} />
-            <span className="text-xs capitalize">{entry.entityType}</span>
+            <EntityIcon type={entry.entity_type} />
+            <span className="text-xs capitalize">
+              {entry.entity_type}
+            </span>
           </div>
         </TableCell>
-        <TableCell className="text-xs max-w-[180px] truncate" title={entry.entityName}>
-          {entry.entityName}
+
+        <TableCell
+          className="text-xs max-w-[180px] truncate"
+          title={entry.entity_name}
+        >
+          {entry.entity_name}
         </TableCell>
-        <TableCell className="text-xs">{entry.actorName ?? "Unknown"}</TableCell>
+
+        <TableCell className="text-xs">
+          {actorName}
+        </TableCell>
+
         <TableCell className="w-8">
           {hasDiff && (
-            expanded
-              ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )
           )}
         </TableCell>
       </TableRow>
+
       {expanded && hasDiff && (
         <TableRow>
           <TableCell colSpan={6} className="bg-muted/20 p-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+
               {entry.before && (
                 <div>
-                  <p className="font-sans font-medium text-muted-foreground mb-1">Before</p>
+                  <p className="font-sans font-medium text-muted-foreground mb-1">
+                    Before
+                  </p>
+
                   <pre className="bg-muted rounded p-2 overflow-auto max-h-48 text-xs">
                     {JSON.stringify(entry.before, null, 2)}
                   </pre>
                 </div>
               )}
+
               {entry.after && (
                 <div>
-                  <p className="font-sans font-medium text-muted-foreground mb-1">After</p>
+                  <p className="font-sans font-medium text-muted-foreground mb-1">
+                    After
+                  </p>
+
                   <pre className="bg-muted rounded p-2 overflow-auto max-h-48 text-xs">
                     {JSON.stringify(entry.after, null, 2)}
                   </pre>
                 </div>
               )}
+
             </div>
           </TableCell>
         </TableRow>
@@ -116,7 +166,7 @@ export default function AuditLogPage() {
 
   async function load() {
     const filters = {};
-    if (search)       filters.search     = search;
+    if (search) filters.search = search;
     if (actionFilter !== "all") filters.action = actionFilter;
     if (entityFilter !== "all") filters.entityType = entityFilter;
     setEntries(await auditRepository.getAll(filters));
@@ -124,7 +174,7 @@ export default function AuditLogPage() {
 
   useEffect(() => {
     load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, actionFilter, entityFilter]);
 
   if (!isAuthenticated) return null;
