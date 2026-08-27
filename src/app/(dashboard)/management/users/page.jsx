@@ -40,55 +40,55 @@ function UserDialog({ open, user, onClose, onSaved }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  // ============================================================
+  // FRONTEND — UserDialog handleSave
+  // ============================================================
+
   const handleSave = async () => {
-
-    if (!form.fullName || !form.username) {
-
+    if (!form.fullName.trim() || !form.username.trim()) {
       toast.error(
         "Full name and username are required"
       );
-
       return;
     }
 
+    if (!form.email.trim()) {
+      toast.error(
+        "Email is required"
+      );
+      return;
+    }
 
     if (!user && !form.password) {
-
       toast.error(
         "Password is required for new users"
       );
-
       return;
     }
 
-
     try {
-
       const data = {
-        ...form
+        username: form.username.trim(),
+        email: form.email.trim(),
+        fullName: form.fullName.trim(),
+        role: form.role,
       };
-
-
-      // Don't send an empty password when editing
-      if (!data.password) {
-        delete data.password;
+      // Only send a password when creating
+      // or when changing an existing password.
+      if (form.password) {
+        data.password = form.password;
       }
 
-
       if (user) {
-
         await userRepository.update(
           user.id,
           data
         );
-
       } else {
-
         await userRepository.create(
           data
         );
       }
-
 
       toast.success(
         user
@@ -96,13 +96,15 @@ function UserDialog({ open, user, onClose, onSaved }) {
           : "User created"
       );
 
-      onSaved();
+      await onSaved();
 
       onClose();
 
     } catch (err) {
-
-      console.error(err);
+      console.error(
+        "Failed to save user:",
+        err
+      );
 
       toast.error(
         err.message ||
@@ -202,7 +204,7 @@ export default function ManagementUsersPage() {
   }
 
   async function handleToggle(id, current) {
-    await userRepository.update(id, { isActive: !current });
+    await userRepository.update(id, { is_active: !current });
     toast.success(`User ${current ? "deactivated" : "activated"}`);
     load();
   }
@@ -242,21 +244,21 @@ export default function ManagementUsersPage() {
         ) : (
           <div className="space-y-2">
             {users.map((u) => (
-              <Card key={u.id} className={!u.isActive ? "opacity-60" : ""}>
+              <Card key={u.id} className={!u.is_active ? "opacity-60" : ""}>
                 <CardContent className="p-4 flex items-center gap-4">
                   <Avatar>
-                    <AvatarFallback>{getInitials(u.fullName)}</AvatarFallback>
+                    <AvatarFallback>{getInitials(u.full_name)}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium">{u.fullName}</p>
+                      <p className="text-sm font-medium">{u.full_name}</p>
                       <Badge
                         variant={ROLE_VARIANTS[u.role] ?? "secondary"}
                         className="text-xs"
                       >
                         {ROLE_LABELS[u.role] ?? u.role}
                       </Badge>
-                      {!u.isActive && (
+                      {!u.is_active && (
                         <Badge variant="outline" className="text-xs">
                           Inactive
                         </Badge>
@@ -271,7 +273,7 @@ export default function ManagementUsersPage() {
                       size="sm"
                       variant="ghost"
                       className="h-7 text-xs"
-                      onClick={() => handleToggle(u.id, u.isActive)}
+                      onClick={() => handleToggle(u.id, u.is_active)}
                     >
                       {u.isActive ? "Deactivate" : "Activate"}
                     </Button>

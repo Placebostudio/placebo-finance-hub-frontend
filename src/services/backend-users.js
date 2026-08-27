@@ -1,6 +1,9 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/users`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/users`;
 
 const LOGGED_IN_USER_KEY = "logged_in_user";
+
+import { auditRepository } from "./backend-audits.js";
 
 export const userRepository = {
 
@@ -10,10 +13,14 @@ export const userRepository = {
     // ============================================================
 
     async getAll() {
-        const response = await fetch(BASE_URL);
+
+        const response =
+            await fetch(BASE_URL);
 
         if (!response.ok) {
-            throw new Error("Failed to get users");
+            throw new Error(
+                "Failed to get users"
+            );
         }
 
         return await response.json();
@@ -26,14 +33,20 @@ export const userRepository = {
     // ============================================================
 
     async getById(id) {
-        const response = await fetch(`${BASE_URL}/${id}`);
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`
+            );
 
         if (response.status === 404) {
             return null;
         }
 
         if (!response.ok) {
-            throw new Error("Failed to get user");
+            throw new Error(
+                "Failed to get user"
+            );
         }
 
         return await response.json();
@@ -42,49 +55,51 @@ export const userRepository = {
 
     // ============================================================
     // GET ACTIVE USERS
-    //
-    // Your backend doesn't currently have a separate route for this,
-    // so get all users and filter on the frontend.
     // ============================================================
 
     async getActive() {
-        const users = await this.getAll();
 
-        return users.filter((user) => user.is_active);
+        const users =
+            await this.getAll();
+
+        return users.filter(
+            (user) => user.is_active
+        );
     },
 
 
     // ============================================================
     // LOGIN
     // POST /api/users/login
-    //
-    // Assumes Supabase Auth already authenticated the user and this
-    // endpoint receives the authenticated user's UUID.
     // ============================================================
 
     async login(username, password) {
 
-        const response = await fetch(
-            `${BASE_URL}/login`,
-            {
-                method: "POST",
+        const response =
+            await fetch(
+                `${BASE_URL}/login`,
+                {
+                    method: "POST",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    username,
-                    password
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        username,
+                        password
+                    })
+                }
+            );
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Login failed"
+                data.error ||
+                "Login failed"
             );
         }
 
@@ -99,6 +114,41 @@ export const userRepository = {
         );
 
 
+        // ========================================================
+        // AUDIT LOGIN
+        // ========================================================
+
+        if (data.user?.id) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    data.user.id,
+
+                action:
+                    "login",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    data.user.id,
+
+                before:
+                    null,
+
+                after:
+                    data.user,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
         return data;
     },
 
@@ -110,7 +160,9 @@ export const userRepository = {
     getLoggedInUser() {
 
         const storedUser =
-            localStorage.getItem(LOGGED_IN_USER_KEY);
+            localStorage.getItem(
+                LOGGED_IN_USER_KEY
+            );
 
         if (!storedUser) {
             return null;
@@ -118,7 +170,9 @@ export const userRepository = {
 
         try {
 
-            return JSON.parse(storedUser);
+            return JSON.parse(
+                storedUser
+            );
 
         } catch (err) {
 
@@ -140,7 +194,47 @@ export const userRepository = {
     // LOGOUT
     // ============================================================
 
-    logout() {
+    async logout() {
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        // ========================================================
+        // AUDIT LOGOUT
+        // ========================================================
+
+        if (currentUser?.id) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "logout",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    currentUser.id,
+
+                before:
+                    currentUser,
+
+                after:
+                    null,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
         localStorage.removeItem(
             LOGGED_IN_USER_KEY
         );
@@ -153,29 +247,101 @@ export const userRepository = {
     // ============================================================
 
     async create(data) {
-        const response = await fetch(BASE_URL, {
-            method: "POST",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
 
-            body: JSON.stringify({
-                id: data.id,
-                email: data.email,
-                full_name: data.full_name ?? data.fullName,
-                role: data.role ?? "viewer",
-                invited_by: data.invited_by ?? null
-            })
-        });
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        const result = await response.json();
+                    body: JSON.stringify({
+
+                        username:
+                            data.username,
+
+                        email:
+                            data.email,
+
+                        password:
+                            data.password,
+
+                        full_name:
+                            data.fullName ??
+                            data.full_name,
+
+                        role:
+                            data.role ??
+                            "viewer"
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
-            throw new Error(result.error || "Failed to create user");
+
+            throw new Error(
+                result.error ||
+                "Failed to create user"
+            );
         }
 
-        return result.user;
+
+        const user =
+            result.user ?? result;
+
+
+        // ========================================================
+        // AUDIT USER CREATION
+        // ========================================================
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        if (
+            currentUser &&
+            user?.id
+        ) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "create",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    user.id,
+
+                before:
+                    null,
+
+                after:
+                    user,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
+        return user;
     },
 
 
@@ -185,59 +351,200 @@ export const userRepository = {
     // ============================================================
 
     async update(id, changes) {
-        const response = await fetch(`${BASE_URL}/${id}`, {
-            method: "PUT",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+        // ========================================================
+        // GET ORIGINAL USER
+        // ========================================================
 
-            body: JSON.stringify({
-                email: changes.email,
-                full_name: changes.full_name ?? changes.fullName,
-                role: changes.role,
-                is_active:
-                    changes.is_active !== undefined
-                        ? changes.is_active
-                        : changes.isActive
-            })
-        });
+        const before =
+            await this.getById(id);
 
-        const result = await response.json();
 
-        if (!response.ok) {
-            throw new Error(result.error || "Failed to update user");
+        const body = {
+
+            email:
+                changes.email,
+
+            username:
+                changes.username,
+
+            full_name:
+                changes.full_name ??
+                changes.fullName,
+
+            role:
+                changes.role,
+
+            is_active:
+                changes.is_active !== undefined
+                    ? changes.is_active
+                    : changes.isActive
+        };
+
+
+        // Only send password when one was provided.
+        if (changes.password) {
+
+            body.password =
+                changes.password;
         }
 
-        return result.user;
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify(body)
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                result.error ||
+                "Failed to update user"
+            );
+        }
+
+
+        const updatedUser =
+            result.user ?? result;
+
+
+        // ========================================================
+        // AUDIT USER UPDATE
+        // ========================================================
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "update",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    id,
+
+                before,
+
+                after:
+                    updatedUser,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
+        return updatedUser;
     },
 
 
     // ============================================================
     // DEACTIVATE USER
     // DELETE /api/users/:userid
-    //
-    // requester_id is required by your backend.
     // ============================================================
 
     async delete(id, requester_id) {
-        const response = await fetch(`${BASE_URL}/${id}`, {
-            method: "DELETE",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+        const before =
+            await this.getById(id);
 
-            body: JSON.stringify({
-                requester_id
-            })
-        });
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "DELETE",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        requester_id
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
-            throw new Error(result.error || "Failed to deactivate user");
+
+            throw new Error(
+                result.error ||
+                "Failed to deactivate user"
+            );
         }
+
+
+        // ========================================================
+        // AUDIT USER DELETION
+        // ========================================================
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "delete",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    id,
+
+                before,
+
+                after:
+                    null,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
 
         return result;
     },
@@ -245,52 +552,158 @@ export const userRepository = {
 
     // ============================================================
     // REACTIVATE USER
-    //
-    // This requires a route like:
     // PUT /api/users/:userid/reactivate
     // ============================================================
 
     async reactivate(id) {
-        const response = await fetch(
-            `${BASE_URL}/${id}/reactivate`,
-            {
-                method: "PUT"
-            }
-        );
 
-        const result = await response.json();
+        const before =
+            await this.getById(id);
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}/reactivate`,
+                {
+                    method: "PUT"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
-            throw new Error(result.error || "Failed to reactivate user");
+
+            throw new Error(
+                result.error ||
+                "Failed to reactivate user"
+            );
         }
 
-        return result.user;
+
+        const user =
+            result.user ?? result;
+
+
+        // ========================================================
+        // AUDIT USER REACTIVATION
+        // ========================================================
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "reactivate",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    id,
+
+                before,
+
+                after:
+                    user,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
+        return user;
     },
 
 
     // ============================================================
     // ACCEPT INVITATION
-    //
-    // This requires:
     // PUT /api/users/:userid/accept-invitation
     // ============================================================
 
     async acceptInvitation(id) {
-        const response = await fetch(
-            `${BASE_URL}/${id}/accept-invitation`,
-            {
-                method: "PUT"
-            }
-        );
 
-        const result = await response.json();
+        const before =
+            await this.getById(id);
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}/accept-invitation`,
+                {
+                    method: "PUT"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
-                result.error || "Failed to accept invitation"
+                result.error ||
+                "Failed to accept invitation"
             );
         }
 
-        return result.user;
+
+        const user =
+            result.user ?? result;
+
+
+        // ========================================================
+        // AUDIT INVITATION ACCEPTANCE
+        // ========================================================
+
+        const currentUser =
+            this.getLoggedInUser();
+
+
+        if (currentUser) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "accept_invitation",
+
+                entity_type:
+                    "user",
+
+                entity_id:
+                    id,
+
+                before,
+
+                after:
+                    user,
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+
+        return user;
     }
 };
