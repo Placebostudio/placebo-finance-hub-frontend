@@ -63,6 +63,27 @@ const EMPTY_FORM = {
   notes: "",
 };
 
+/**
+ * Fields that automatic extraction (OCR/AI) is expected to populate.
+ * Empty values in these fields after extraction are considered "missing".
+ *
+ * Fields NOT in this list (category_id, paymentMethod, notes) are manual-only
+ * and are never highlighted as missing from extraction.
+ */
+const EXTRACTABLE_FIELDS = [
+  "vendorName",
+  "documentType",
+  "documentNumber",
+  "documentDate",
+  "dueDate",
+  "currency",
+  "country",
+  "grossAmount",
+  "vatRate",
+  "netAmount",
+  "vatAmount",
+];
+
 /** Map field status → badge appearance */
 const FIELD_STATUS_BADGE = {
   found: { label: "Extracted", className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
@@ -78,6 +99,12 @@ const METHOD_LABELS = {
   scanned_pdf_ocr: "Scanned PDF (OCR)",
   manual: "Manual entry",
 };
+
+/** Tailwind classes for an input/select that was missing from extraction */
+const MISSING_INPUT_CLS = "border-red-400 bg-red-50 dark:bg-red-950/30";
+
+/** Tailwind classes for an already-invalid (extraction flagged) input */
+const INVALID_INPUT_CLS = "border-red-400";
 
 function formatDateForInput(value) {
   if (!value) return "";
@@ -112,12 +139,27 @@ function FieldStatusBadge({ status }) {
   );
 }
 
-function Field({ label, fieldKey, extractedField, children }) {
+/**
+ * Field wrapper component.
+ *
+ * Props:
+ *   label         — field label text
+ *   fieldKey      — form key (unused here; kept for clarity at call-site)
+ *   extractedField — raw extraction field object ({ status, value, sourceText })
+ *   missing        — true when extraction missed this field AND the user hasn't filled it yet
+ *   children      — the actual input/select element
+ */
+function Field({ label, fieldKey, extractedField, missing, children }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground flex items-center gap-1">
         {label}
         {extractedField && <FieldStatusBadge status={extractedField.status} />}
+        {missing && (
+          <span className="ml-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+            Needs review
+          </span>
+        )}
       </Label>
       {children}
       {extractedField?.sourceText && extractedField.status !== "missing" && (
@@ -239,6 +281,14 @@ export default function ReviewPage() {
   // Track whether the country was just set from extraction (not a user change)
   const countryFromExtraction = useRef(false);
 
+  /**
+   * Fields that the OCR/AI marked as "missing" in the original extraction result.
+   * Populated once when extraction data loads; never changes afterwards.
+   * Used to highlight unresolved missing fields without conflating this state
+   * with normal form validation errors.
+   */
+  const missingFieldsRef = useRef(new Set());
+
   useEffect(() => {
     async function fetchData() {
       if (!id) return;
@@ -287,6 +337,8 @@ export default function ReviewPage() {
         // ============================================================
 
         if (expense) {
+          // Already reviewed — no extraction highlighting.
+          // missingFieldsRef stays as empty Set().
           setExtraction(null);
 
           countryFromExtraction.current = false;
@@ -360,6 +412,18 @@ export default function ReviewPage() {
           setExtraction(extractionData);
 
           if (extractionData?.fields) {
+            // Compute which extraction-relevant fields were missing from OCR.
+            // This is captured once from the original extraction result and
+            // used throughout the session to highlight unresolved fields.
+            const f = extractionData.fields;
+            const missing = new Set();
+            for (const key of EXTRACTABLE_FIELDS) {
+              if (f[key]?.status === "missing") {
+                missing.add(key);
+              }
+            }
+            missingFieldsRef.current = missing;
+
             countryFromExtraction.current = true;
             vatManuallySet.current = false;
 
@@ -496,6 +560,36 @@ export default function ReviewPage() {
     throw new Error("SEK exchange rate not found");
   }
 
+  // ── Extraction missing-field helpers ──────────────────────────────────────
+  //
+  // Two separate concepts:
+  //   A. Extraction missing:  OCR did not provide a value (source: missingFieldsRef)
+  //   B. Validation error:    Current value is invalid (source: ef[field].status)
+  //
+  // isMissingUnresolved answers: "was this field missing from extraction AND
+  // has the user not yet manually filled it?"
+  //
+  // The red state disappears as soon as the user types a non-empty value,
+  // because the condition checks form[key] — which is live state.
+  //
+  const hasExtraction = !!extraction;
+
+  /**
+   * Returns true when:
+   *   1. There is an active extraction (not a pre-saved expense)
+   *   2. The field was marked "missing" in the original OCR result
+   *   3. The current form value is still empty (user has not resolved it)
+   *
+   * This is NOT a validation error — it is an extraction completeness hint.
+   */
+  function isMissingUnresolved(fieldKey) {
+    if (!hasExtraction) return false;
+    if (!missingFieldsRef.current.has(fieldKey)) return false;
+    const val = form[fieldKey];
+    return val === "" || val == null;
+  }
+
+  // ── End of helpers ────────────────────────────────────────────────────────
 
   const save = async (status) => {
     setSaving(true);
@@ -747,7 +841,6 @@ export default function ReviewPage() {
   if (!doc) return null;
 
   const ef = extraction?.fields ?? {};
-  const hasExtraction = !!extraction;
   const validationIssues = extraction?.validationIssues ?? [];
 
   // Check whether net + vatAmount ≈ gross for live form values
@@ -896,17 +989,30 @@ export default function ReviewPage() {
               {/* Document section */}
               <div className="space-y-3">
                 <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Document</p>
-                <Field label="Vendor Name" fieldKey="vendorName" extractedField={ef.vendorName}>
+                <Field
+                  label="Vendor Name"
+                  fieldKey="vendorName"
+                  extractedField={ef.vendorName}
+                  missing={isMissingUnresolved("vendorName")}
+                >
                   <Input
                     value={form.vendorName}
                     onChange={(e) => set("vendorName", e.target.value)}
                     placeholder="e.g. Amazon, Adobe"
+                    className={isMissingUnresolved("vendorName") ? MISSING_INPUT_CLS : ""}
                   />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Document Type" fieldKey="documentType" extractedField={ef.documentType}>
+                  <Field
+                    label="Document Type"
+                    fieldKey="documentType"
+                    extractedField={ef.documentType}
+                    missing={isMissingUnresolved("documentType")}
+                  >
                     <Select value={form.documentType} onValueChange={(v) => set("documentType", v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className={isMissingUnresolved("documentType") ? MISSING_INPUT_CLS : ""}>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         {APP_CONFIG.documentTypes.map((t) => (
                           <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
@@ -914,16 +1020,27 @@ export default function ReviewPage() {
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Document Number" fieldKey="documentNumber" extractedField={ef.documentNumber}>
+                  <Field
+                    label="Document Number"
+                    fieldKey="documentNumber"
+                    extractedField={ef.documentNumber}
+                    missing={isMissingUnresolved("documentNumber")}
+                  >
                     <Input
                       value={form.documentNumber}
                       onChange={(e) => set("documentNumber", e.target.value)}
                       placeholder="INV-001"
+                      className={isMissingUnresolved("documentNumber") ? MISSING_INPUT_CLS : ""}
                     />
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Document Date" fieldKey="documentDate" extractedField={ef.documentDate}>
+                  <Field
+                    label="Document Date"
+                    fieldKey="documentDate"
+                    extractedField={ef.documentDate}
+                    missing={isMissingUnresolved("documentDate")}
+                  >
                     <input
                       type="date"
                       value={formatDateForInput(form.documentDate)}
@@ -933,9 +1050,19 @@ export default function ReviewPage() {
                           documentDate: e.target.value
                         })
                       }
+                      className={
+                        isMissingUnresolved("documentDate")
+                          ? `w-full rounded-md border px-3 py-1 text-sm h-9 ${MISSING_INPUT_CLS}`
+                          : ""
+                      }
                     />
                   </Field>
-                  <Field label="Due Date" fieldKey="dueDate" extractedField={ef.dueDate}>
+                  <Field
+                    label="Due Date"
+                    fieldKey="dueDate"
+                    extractedField={ef.dueDate}
+                    missing={isMissingUnresolved("dueDate")}
+                  >
                     <input
                       type="date"
                       value={formatDateForInput(form.dueDate)}
@@ -944,6 +1071,11 @@ export default function ReviewPage() {
                           ...form,
                           dueDate: e.target.value
                         })
+                      }
+                      className={
+                        isMissingUnresolved("dueDate")
+                          ? `w-full rounded-md border px-3 py-1 text-sm h-9 ${MISSING_INPUT_CLS}`
+                          : ""
                       }
                     />
                   </Field>
@@ -958,9 +1090,16 @@ export default function ReviewPage() {
 
                 {/* Currency + Country */}
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Currency" fieldKey="currency" extractedField={ef.currency}>
+                  <Field
+                    label="Currency"
+                    fieldKey="currency"
+                    extractedField={ef.currency}
+                    missing={isMissingUnresolved("currency")}
+                  >
                     <Select value={form.currency} onValueChange={(v) => set("currency", v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className={isMissingUnresolved("currency") ? MISSING_INPUT_CLS : ""}>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         {APP_CONFIG.supportedCurrencies.map((c) => (
                           <SelectItem key={c} value={c}>{c}</SelectItem>
@@ -968,17 +1107,28 @@ export default function ReviewPage() {
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="Country" fieldKey="country" extractedField={ef.country}>
+                  <Field
+                    label="Country"
+                    fieldKey="country"
+                    extractedField={ef.country}
+                    missing={isMissingUnresolved("country")}
+                  >
                     <Input
                       value={form.country}
                       onChange={(e) => set("country", e.target.value)}
                       placeholder="e.g. Israel"
+                      className={isMissingUnresolved("country") ? MISSING_INPUT_CLS : ""}
                     />
                   </Field>
                 </div>
 
                 {/* VAT Rate — free text input, not a dropdown */}
-                <Field label="VAT Rate (%)" fieldKey="vatRate" extractedField={ef.vatRate}>
+                <Field
+                  label="VAT Rate (%)"
+                  fieldKey="vatRate"
+                  extractedField={ef.vatRate}
+                  missing={isMissingUnresolved("vatRate")}
+                >
                   <Input
                     type="number"
                     step="0.01"
@@ -991,12 +1141,23 @@ export default function ReviewPage() {
                       recalcFromGross(form.grossAmount, e.target.value);
                     }}
                     placeholder="e.g. 18"
-                    className={ef.vatRate?.status === "invalid" ? "border-red-400" : ""}
+                    className={
+                      ef.vatRate?.status === "invalid"
+                        ? INVALID_INPUT_CLS
+                        : isMissingUnresolved("vatRate")
+                          ? MISSING_INPUT_CLS
+                          : ""
+                    }
                   />
                 </Field>
 
                 {/* Total Paid (Gross) — primary amount field */}
-                <Field label="Total Paid (Gross)" fieldKey="grossAmount" extractedField={ef.grossAmount}>
+                <Field
+                  label="Total Paid (Gross)"
+                  fieldKey="grossAmount"
+                  extractedField={ef.grossAmount}
+                  missing={isMissingUnresolved("grossAmount")}
+                >
                   <Input
                     type="number"
                     step="0.01"
@@ -1006,7 +1167,13 @@ export default function ReviewPage() {
                       recalcFromGross(e.target.value, form.vatRate);
                     }}
                     placeholder="0.00"
-                    className={ef.grossAmount?.status === "invalid" ? "border-red-400" : ""}
+                    className={
+                      ef.grossAmount?.status === "invalid"
+                        ? INVALID_INPUT_CLS
+                        : isMissingUnresolved("grossAmount")
+                          ? MISSING_INPUT_CLS
+                          : ""
+                    }
                   />
                 </Field>
                 <p className="text-[10px] text-muted-foreground -mt-1">
@@ -1016,24 +1183,46 @@ export default function ReviewPage() {
 
                 {/* Net + VAT Amount — normally calculated outputs */}
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Net Amount" fieldKey="netAmount" extractedField={ef.netAmount}>
+                  <Field
+                    label="Net Amount"
+                    fieldKey="netAmount"
+                    extractedField={ef.netAmount}
+                    missing={isMissingUnresolved("netAmount")}
+                  >
                     <Input
                       type="number"
                       step="0.01"
                       value={form.netAmount}
                       onChange={(e) => set("netAmount", e.target.value)}
                       placeholder="0.00"
-                      className={ef.netAmount?.status === "invalid" ? "border-red-400" : ""}
+                      className={
+                        ef.netAmount?.status === "invalid"
+                          ? INVALID_INPUT_CLS
+                          : isMissingUnresolved("netAmount")
+                            ? MISSING_INPUT_CLS
+                            : ""
+                      }
                     />
                   </Field>
-                  <Field label="VAT Amount" fieldKey="vatAmount" extractedField={ef.vatAmount}>
+                  <Field
+                    label="VAT Amount"
+                    fieldKey="vatAmount"
+                    extractedField={ef.vatAmount}
+                    missing={isMissingUnresolved("vatAmount")}
+                  >
                     <Input
                       type="number"
                       step="0.01"
                       value={form.vatAmount}
                       onChange={(e) => set("vatAmount", e.target.value)}
                       placeholder="0.00"
-                      className={ef.vatAmount?.status === "invalid" ? "border-red-400" : ""}
+                      className={
+                        ef.vatAmount?.status === "invalid"
+                          ? INVALID_INPUT_CLS
+                          : isMissingUnresolved("vatAmount")
+                            ? MISSING_INPUT_CLS
+                            : ""
+                      }
                     />
                   </Field>
                 </div>
@@ -1041,7 +1230,7 @@ export default function ReviewPage() {
 
               <Separator />
 
-              {/* Classification */}
+              {/* Classification — manual-only fields, never highlighted as missing */}
               <div className="space-y-3">
                 <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Classification</p>
                 <Field label="Category" fieldKey="category">
