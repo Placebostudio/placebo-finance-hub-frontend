@@ -1,3 +1,16 @@
+/**
+ * Reconciliation repository — backend implementation.
+ *
+ * Uses expenseRepository, transactionRepository, and matchRepository to
+ * communicate with the backend API.
+ *
+ * Scoring weights (total 100):
+ *   Amount   50 pts — primary signal
+ *   Date     30 pts — secondary signal
+ *   Currency 15 pts — tertiary signal
+ *   Vendor    5 pts — supporting hint only (OCR is unreliable for vendor names)
+ */
+
 import { expenseRepository } from "./backend-expenses.js";
 import { transactionRepository } from "./backend-transactions.js";
 import { matchRepository } from "./backend-matches.js";
@@ -8,6 +21,12 @@ import { normalizeVendorName } from "@/lib/utils";
 // MATCH SCORING
 // ============================================================
 
+/**
+ * Score an (expense, transaction) pair. Returns { score: 0–100, reasons: string[] }.
+ * Pure function — no side effects.
+ *
+ * Field names use the backend snake_case convention.
+ */
 export function scoreMatch(expense, transaction) {
 
     let score = 0;
@@ -15,7 +34,7 @@ export function scoreMatch(expense, transaction) {
 
 
     // ============================================================
-    // AMOUNT — 40 POINTS
+    // AMOUNT — 50 POINTS
     // ============================================================
 
     const expenseAmount =
@@ -50,17 +69,17 @@ export function scoreMatch(expense, transaction) {
 
         if (percentage < 0.005) {
 
-            score += 40;
+            score += 50;
             reasons.push("Exact amount match");
 
         } else if (percentage < 0.02) {
 
-            score += 30;
+            score += 38;
             reasons.push("Near-exact amount");
 
         } else if (percentage < 0.05) {
 
-            score += 15;
+            score += 20;
             reasons.push("Approximate amount");
         }
     }
@@ -123,78 +142,7 @@ export function scoreMatch(expense, transaction) {
 
 
     // ============================================================
-    // VENDOR — 20 POINTS
-    // ============================================================
-
-    const vendor =
-        normalizeVendorName(
-            expense.vendor_name ?? ""
-        );
-
-    const description =
-        normalizeVendorName(
-            transaction.description ?? ""
-        );
-
-
-    if (vendor && description) {
-
-        const vendorWords =
-            vendor
-                .split(" ")
-                .filter(
-                    (word) => word.length > 2
-                );
-
-
-        const matched =
-            vendorWords.filter(
-                (word) =>
-                    description.includes(word) ||
-                    vendor.includes(
-                        normalizeVendorName(description)
-                    )
-            );
-
-
-        if (vendor === description) {
-
-            score += 20;
-            reasons.push("Exact vendor match");
-
-        } else if (matched.length > 0) {
-
-            const ratio =
-                matched.length /
-                Math.max(
-                    vendorWords.length,
-                    1
-                );
-
-            const points =
-                Math.round(20 * ratio);
-
-            score += points;
-
-
-            if (points >= 10) {
-
-                reasons.push(
-                    "Similar vendor name"
-                );
-
-            } else {
-
-                reasons.push(
-                    "Partial vendor match"
-                );
-            }
-        }
-    }
-
-
-    // ============================================================
-    // CURRENCY — 5 POINTS
+    // CURRENCY — 15 POINTS
     // ============================================================
 
     const expenseCurrency =
@@ -211,17 +159,75 @@ export function scoreMatch(expense, transaction) {
         expenseCurrency === transactionCurrency
     ) {
 
-        score += 5;
+        score += 15;
         reasons.push("Same currency");
     }
 
 
     // ============================================================
-    // CARD — 5 POINTS
+    // VENDOR / DESCRIPTION — 5 POINTS MAX
     //
-    // Currently no card-last-four field is available
-    // in the backend expense schema.
+    // Supporting signal only. OCR vendor extraction is unreliable.
+    // Vendor name must never compensate for a poor amount/date/currency match.
     // ============================================================
+
+    const vendor =
+        normalizeVendorName(
+            expense.vendor_name ?? ""
+        );
+
+    const description =
+        normalizeVendorName(
+            transaction.description ?? ""
+        );
+
+
+    if (vendor && description) {
+
+        if (vendor === description) {
+
+            score += 5;
+            reasons.push("Exact vendor match");
+
+        } else {
+
+            const vendorWords =
+                vendor
+                    .split(" ")
+                    .filter(
+                        (word) => word.length > 2
+                    );
+
+            if (vendorWords.length > 0) {
+
+                const matchedWords =
+                    vendorWords.filter(
+                        (word) => description.includes(word)
+                    );
+
+                if (matchedWords.length > 0) {
+
+                    const ratio =
+                        matchedWords.length /
+                        vendorWords.length;
+
+                    let points;
+                    if (ratio >= 0.75) points = 4;
+                    else if (ratio >= 0.5) points = 3;
+                    else if (ratio >= 0.25) points = 2;
+                    else points = 1;
+
+                    score += points;
+
+                    reasons.push(
+                        points >= 3
+                            ? "Similar vendor name"
+                            : "Partial vendor match"
+                    );
+                }
+            }
+        }
+    }
 
 
     return {
@@ -250,7 +256,57 @@ function scoreToType(score) {
 
 
 // ============================================================
-// RECONCILIATION
+// GREEDY 1:1 CANDIDATE SELECTION (pure helper)
+//
+// Selects the globally best non-conflicting pairs.
+// Input must be sorted by score descending.
+// ============================================================
+
+function selectCandidates(pairs, usedExpenseIds, usedTxnIds) {
+
+    const claimedExpenseIds = new Set(usedExpenseIds);
+    const claimedTxnIds = new Set(usedTxnIds);
+    const candidates = [];
+
+    for (const pair of pairs) {
+
+        if (claimedExpenseIds.has(pair.expense.id)) continue;
+        if (claimedTxnIds.has(pair.txn.id)) continue;
+
+        claimedExpenseIds.add(pair.expense.id);
+        claimedTxnIds.add(pair.txn.id);
+
+        candidates.push({
+
+            expenseId:
+                pair.expense.id,
+
+            expense:
+                pair.expense,
+
+            transactionId:
+                pair.txn.id,
+
+            transaction:
+                pair.txn,
+
+            score:
+                pair.score,
+
+            matchType:
+                pair.matchType,
+
+            reasons:
+                pair.reasons
+        });
+    }
+
+    return candidates;
+}
+
+
+// ============================================================
+// RECONCILIATION REPOSITORY
 // ============================================================
 
 export const reconciliationRepository = {
@@ -327,26 +383,65 @@ export const reconciliationRepository = {
     // ============================================================
     // GENERATE CANDIDATES
     //
-    // Uses backend expenses + backend transactions.
-    // Candidates are NOT saved.
+    // Produces 1:1 suggestions — no expense and no transaction
+    // appears in more than one candidate.
+    //
+    // Parameters:
+    //   expenses     — pre-filtered list, or null to fetch from API
+    //   transactions — pre-filtered list, or null to fetch from API
+    //   period       — YYYY-MM string; applied when fetching from API
+    //
+    // Eligibility (when fetching internally):
+    //   Expenses:     status=approved, payment_method=credit_card, not spam
+    //   Transactions: transaction_type=expense, not spam
+    //
+    // Excluded pairs:
+    //   - Already confirmed on either side
+    //   - Previously rejected (exact pair only — either party can match others)
     // ============================================================
 
     async generateCandidates(
         expenses = null,
-        transactions = null
+        transactions = null,
+        period = null
     ) {
 
         if (!expenses) {
 
-            expenses =
-                await expenseRepository.getAll();
+            const filters = { spam: false };
+
+            if (period) {
+                filters.period = period;
+            }
+
+            const allExpenses =
+                await expenseRepository.getAll(filters);
+
+            // Only approved credit-card expenses participate in reconciliation.
+            // Cash and other payment methods are excluded.
+            expenses = allExpenses.filter(
+                (e) =>
+                    e.status === "approved" &&
+                    e.payment_method === "credit_card"
+            );
         }
 
 
         if (!transactions) {
 
+            const filters = {
+                spam: false,
+                // Only match against expense-type transactions.
+                // Income, card settlements, and other types are excluded.
+                transaction_type: "expense"
+            };
+
+            if (period) {
+                filters.period = period;
+            }
+
             transactions =
-                await transactionRepository.getAll();
+                await transactionRepository.getAll(filters);
         }
 
 
@@ -354,51 +449,49 @@ export const reconciliationRepository = {
             await matchRepository.getAll();
 
 
-        // Existing confirmed matches
-        const confirmed =
-            matches.filter(
-                (match) =>
-                    match.status === "confirmed" &&
-                    !match.spam
-            );
-
-
-        const matchedExpenseIds =
+        // IDs already committed to confirmed matches
+        const confirmedExpenseIds =
             new Set(
-                confirmed.map(
-                    (match) =>
-                        match.expense_id
-                )
+                matches
+                    .filter(
+                        (m) =>
+                            m.status === "confirmed" &&
+                            !m.spam
+                    )
+                    .map((m) => m.expense_id)
             );
 
-
-        const matchedTransactionIds =
+        const confirmedTxnIds =
             new Set(
-                confirmed.map(
-                    (match) =>
-                        match.transaction_id
-                )
+                matches
+                    .filter(
+                        (m) =>
+                            m.status === "confirmed" &&
+                            !m.spam
+                    )
+                    .map((m) => m.transaction_id)
+            );
+
+        // Exact pairs the user explicitly rejected.
+        // Only the specific combination is blocked; either party can match others.
+        const rejectedPairs =
+            new Set(
+                matches
+                    .filter((m) => m.status === "rejected")
+                    .map((m) => `${m.expense_id}|${m.transaction_id}`)
             );
 
 
-        const candidates = [];
-
+        // Score all eligible pairs
+        const pairs = [];
 
         for (const expense of expenses) {
 
             if (expense.spam) continue;
 
-            if (
-                matchedExpenseIds.has(
-                    expense.id
-                )
-            ) {
+            if (confirmedExpenseIds.has(expense.id)) {
                 continue;
             }
-
-
-            let best = null;
-
 
             for (const transaction of transactions) {
 
@@ -406,81 +499,52 @@ export const reconciliationRepository = {
                     continue;
                 }
 
+                if (confirmedTxnIds.has(transaction.id)) {
+                    continue;
+                }
 
                 if (
-                    matchedTransactionIds.has(
-                        transaction.id
+                    rejectedPairs.has(
+                        `${expense.id}|${transaction.id}`
                     )
                 ) {
                     continue;
                 }
 
+                const { score, reasons } =
+                    scoreMatch(expense, transaction);
 
-                const {
-                    score,
-                    reasons
-                } =
-                    scoreMatch(
-                        expense,
-                        transaction
-                    );
-
-
-                const matchType =
-                    scoreToType(score);
-
+                const matchType = scoreToType(score);
 
                 if (!matchType) {
                     continue;
                 }
 
-
-                if (
-                    !best ||
-                    score > best.score
-                ) {
-
-                    best = {
-                        score,
-                        reasons,
-                        matchType,
-                        transaction
-                    };
-                }
-            }
-
-
-            if (best) {
-
-                candidates.push({
-
-                    expenseId:
-                        expense.id,
-
+                pairs.push({
                     expense,
-
-                    transactionId:
-                        best.transaction.id,
-
-                    transaction:
-                        best.transaction,
-
-                    score:
-                        best.score,
-
-                    matchType:
-                        best.matchType,
-
-                    reasons:
-                        best.reasons
+                    txn: transaction,
+                    score,
+                    reasons,
+                    matchType
                 });
             }
         }
 
 
+        // Sort by score descending, then apply greedy 1:1 assignment.
+        // Greedy ensures the globally best pair is locked in first, preventing
+        // any transaction from appearing in multiple candidates.
+        pairs.sort((a, b) => b.score - a.score);
+
+        const candidates =
+            selectCandidates(
+                pairs,
+                confirmedExpenseIds,
+                confirmedTxnIds
+            );
+
         return candidates.sort(
-            (a, b) =>
-                b.score - a.score
+            (a, b) => b.score - a.score
         );
     },
 
@@ -573,6 +637,23 @@ export const reconciliationRepository = {
 
     // ============================================================
     // REJECT CANDIDATE
+    //
+    // Records this specific expense ↔ transaction pair as rejected
+    // so it is never re-suggested. Either party remains eligible to
+    // match with other records.
+    //
+    // allocated_amount is intentionally null for rejected records —
+    // a rejection is not a financial allocation.
+    //
+    // NOTE: The backend schema must allow allocated_amount to be NULL
+    // for rejected matches. If the backend enforces NOT NULL on that
+    // column, a migration is needed:
+    //
+    //   ALTER TABLE expense_transaction_matches
+    //     ALTER COLUMN allocated_amount DROP NOT NULL;
+    //
+    // (The previous workaround of allocated_amount = 0.01 was
+    // semantically incorrect and would corrupt coverage calculations.)
     // ============================================================
 
     async rejectCandidate(
@@ -589,7 +670,7 @@ export const reconciliationRepository = {
                 transactionId,
 
             allocated_amount:
-                0.01,
+                null,
 
             score:
                 0,
@@ -628,17 +709,18 @@ export const reconciliationRepository = {
         );
 
 
-        // The backend should be responsible for
-        // changing transaction status when appropriate.
-        //
-        // If your transaction controller does not currently
-        // have a status endpoint, add one there rather than
-        // modifying the transaction directly here.
+        // The backend should reset the transaction status
+        // when a confirmed match is deleted. Handle this in
+        // the backend match controller / delete hook rather
+        // than issuing a separate update from the frontend.
     },
 
 
     // ============================================================
     // REVALIDATE AFTER EXPENSE EDIT
+    //
+    // Re-scores an existing confirmed match after the expense
+    // has been edited. Removes the match if it is no longer valid.
     // ============================================================
 
     async revalidateMatchAfterExpenseEdit(

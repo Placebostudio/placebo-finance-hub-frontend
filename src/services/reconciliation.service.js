@@ -5,6 +5,12 @@
  * Match types: strong_candidate | possible_candidate | manual
  *
  * The matching algorithm is deterministic and purely rule-based (no AI).
+ *
+ * Scoring weights (total 100):
+ *   Amount   50 pts — primary signal
+ *   Date     30 pts — secondary signal
+ *   Currency 15 pts — tertiary signal
+ *   Vendor    5 pts — supporting hint only (OCR is unreliable for vendor names)
  */
 
 import { lsGetArray, lsSetArray } from "@/storage/local-store";
@@ -16,38 +22,38 @@ const STORE = "matches";
 // ── Matching algorithm ────────────────────────────────────────────────────────
 
 /**
- * Score an (expense, transaction) pair. Returns 0–100 + reasons array.
+ * Score an (expense, transaction) pair. Returns { score: 0–100, reasons: string[] }.
+ * Pure function — no side effects.
  *
  * Weights:
- *   Amount match   40 pts
- *   Date proximity 30 pts
- *   Vendor match   20 pts
- *   Currency match  5 pts
- *   Card match      5 pts
+ *   Amount match   50 pts  (primary signal)
+ *   Date proximity 30 pts  (secondary signal)
+ *   Currency match 15 pts  (tertiary signal)
+ *   Vendor match    5 pts  (supporting hint only)
  */
 export function scoreMatch(expense, transaction) {
   let score = 0;
   const reasons = [];
 
-  // Amount (40 pts)
+  // ── Amount (50 pts) ──────────────────────────────────────────────────────
   const expenseAmt = Math.abs(expense.grossAmount ?? 0);
   const txnAmt = Math.abs(transaction.billedAmount ?? transaction.originalAmount ?? 0);
   if (expenseAmt > 0 && txnAmt > 0) {
     const diff = Math.abs(expenseAmt - txnAmt);
     const pct = diff / expenseAmt;
     if (pct < 0.005) {
-      score += 40;
+      score += 50;
       reasons.push("Exact amount match");
     } else if (pct < 0.02) {
-      score += 30;
+      score += 38;
       reasons.push("Near-exact amount");
     } else if (pct < 0.05) {
-      score += 15;
+      score += 20;
       reasons.push("Approximate amount");
     }
   }
 
-  // Date (30 pts) — compare documentDate vs transactionDate
+  // ── Date (30 pts) ────────────────────────────────────────────────────────
   const d1 = expense.documentDate ? new Date(expense.documentDate) : null;
   const d2 = transaction.transactionDate ? new Date(transaction.transactionDate) : null;
   if (d1 && d2 && !isNaN(d1) && !isNaN(d2)) {
@@ -67,46 +73,91 @@ export function scoreMatch(expense, transaction) {
     }
   }
 
-  // Vendor (20 pts)
-  const vendor = normalizeVendorName(expense.vendorName ?? "");
-  const desc = normalizeVendorName(transaction.description ?? "");
-  if (vendor && desc) {
-    // Check if either contains the other, or if significant words overlap
-    const vendorWords = vendor.split(" ").filter((w) => w.length > 2);
-    const matched = vendorWords.filter(
-      (w) => desc.includes(w) || vendor.includes(normalizeVendorName(desc))
-    );
-    if (vendor === desc) {
-      score += 20;
-      reasons.push("Exact vendor match");
-    } else if (matched.length > 0) {
-      const ratio = matched.length / Math.max(vendorWords.length, 1);
-      const pts = Math.round(20 * ratio);
-      score += pts;
-      if (pts >= 10) reasons.push("Similar vendor name");
-      else reasons.push("Partial vendor match");
-    }
-  }
-
-  // Currency (5 pts)
+  // ── Currency (15 pts) ────────────────────────────────────────────────────
   const expCcy = expense.currency;
   const txnCcy = transaction.billedCurrency ?? transaction.originalCurrency;
   if (expCcy && txnCcy && expCcy === txnCcy) {
-    score += 5;
+    score += 15;
     reasons.push("Same currency");
   }
 
-  // Card last four (5 pts) — if expense stores card info somehow
-  // (future: allow expense to store card last four)
+  // ── Vendor / description (5 pts max — supporting signal only) ────────────
+  // OCR vendor extraction is unreliable. Vendor must never compensate for a
+  // poor amount / date / currency match.
+  const vendor = normalizeVendorName(expense.vendorName ?? "");
+  const desc = normalizeVendorName(transaction.description ?? "");
+  if (vendor && desc) {
+    if (vendor === desc) {
+      score += 5;
+      reasons.push("Exact vendor match");
+    } else {
+      const vendorWords = vendor.split(" ").filter((w) => w.length > 2);
+      if (vendorWords.length > 0) {
+        const matchedWords = vendorWords.filter((w) => desc.includes(w));
+        if (matchedWords.length > 0) {
+          const ratio = matchedWords.length / vendorWords.length;
+          let pts;
+          if (ratio >= 0.75) pts = 4;
+          else if (ratio >= 0.5) pts = 3;
+          else if (ratio >= 0.25) pts = 2;
+          else pts = 1;
+          score += pts;
+          reasons.push(pts >= 3 ? "Similar vendor name" : "Partial vendor match");
+        }
+      }
+    }
+  }
 
   return { score: Math.min(score, 100), reasons };
 }
 
+
 function scoreToType(score) {
   if (score >= 80) return "strong_candidate";
   if (score >= 50) return "possible_candidate";
-  return null; // below threshold — not a candidate
+  return null; // below threshold — do not suggest
 }
+
+
+/**
+ * Greedily select 1:1 candidate pairs from a pre-scored, pre-sorted list.
+ *
+ * Each expense and each transaction appears in at most one output pair.
+ * `usedExpenseIds` / `usedTxnIds` seed the already-claimed sets (confirmed matches).
+ *
+ * Pure function — no side effects. Exported for testing.
+ *
+ * @param {Array<{expense, txn, score, reasons, matchType}>} pairs  Sorted by score desc.
+ * @param {Set<string>} usedExpenseIds
+ * @param {Set<string>} usedTxnIds
+ * @returns {Array}
+ */
+export function _selectCandidates(pairs, usedExpenseIds, usedTxnIds) {
+  const claimedExpenseIds = new Set(usedExpenseIds);
+  const claimedTxnIds = new Set(usedTxnIds);
+  const candidates = [];
+
+  for (const pair of pairs) {
+    if (claimedExpenseIds.has(pair.expense.id)) continue;
+    if (claimedTxnIds.has(pair.txn.id)) continue;
+
+    claimedExpenseIds.add(pair.expense.id);
+    claimedTxnIds.add(pair.txn.id);
+
+    candidates.push({
+      expenseId: pair.expense.id,
+      expense: pair.expense,
+      transactionId: pair.txn.id,
+      transaction: pair.txn,
+      score: pair.score,
+      matchType: pair.matchType,
+      reasons: pair.reasons,
+    });
+  }
+
+  return candidates;
+}
+
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -123,64 +174,90 @@ export const reconciliationService = {
     return this.getAll().filter((m) => m.status === "confirmed");
   },
 
-  /** Return match for a given expense ID, if confirmed */
+  /** Return confirmed match for a given expense ID. */
   getMatchForExpense(expenseId) {
-    return this.getAll().find(
-      (m) => m.expenseId === expenseId && m.status === "confirmed"
-    ) ?? null;
+    return (
+      this.getAll().find(
+        (m) => m.expenseId === expenseId && m.status === "confirmed"
+      ) ?? null
+    );
   },
 
-  /** Return match for a given transaction ID, if confirmed */
+  /** Return confirmed match for a given transaction ID. */
   getMatchForTransaction(transactionId) {
-    return this.getAll().find(
-      (m) => m.transactionId === transactionId && m.status === "confirmed"
-    ) ?? null;
+    return (
+      this.getAll().find(
+        (m) => m.transactionId === transactionId && m.status === "confirmed"
+      ) ?? null
+    );
   },
 
   /**
-   * Run the matching engine against provided expenses and transactions.
-   * Returns an array of candidate pairs (not saved).
-   * Only suggests matches that aren't already confirmed.
+   * Run the matching engine against the provided expenses and transactions.
+   *
+   * The caller is responsible for pre-filtering both lists to the relevant
+   * accounting period and eligibility criteria (approved CC expenses only,
+   * period-scoped statement transactions). The page already does this via
+   * expenseService.getApprovedCreditCardByPeriod() and
+   * transactionService.getByStatementIds().
+   *
+   * Guarantees:
+   *   - Each expense appears in at most one suggested candidate (1:1).
+   *   - Each transaction appears in at most one suggested candidate (1:1).
+   *   - Already-confirmed pairs are excluded.
+   *   - Previously rejected pairs are excluded (exact pair only — the expense
+   *     and transaction individually remain eligible for other partners).
+   *   - Soft-deleted expenses are skipped defensively.
+   *   - Score < 50 → not included.
+   *
+   * Returns candidates sorted by score descending.
    */
   generateCandidates(expenses, transactions) {
-    const confirmed = this.getAll().filter((m) => m.status === "confirmed");
-    const matchedExpenseIds = new Set(confirmed.map((m) => m.expenseId));
-    const matchedTxnIds = new Set(confirmed.map((m) => m.transactionId));
+    const allMatches = this.getAll();
 
-    const candidates = [];
+    const confirmedExpenseIds = new Set(
+      allMatches.filter((m) => m.status === "confirmed").map((m) => m.expenseId)
+    );
+    const confirmedTxnIds = new Set(
+      allMatches.filter((m) => m.status === "confirmed").map((m) => m.transactionId)
+    );
 
+    // Exact pairs the user explicitly rejected — must not be re-suggested.
+    // Only this specific pair is blocked; both parties remain eligible elsewhere.
+    const rejectedPairs = new Set(
+      allMatches
+        .filter((m) => m.status === "rejected")
+        .map((m) => `${m.expenseId}|${m.transactionId}`)
+    );
+
+    // Score all eligible pairs
+    const pairs = [];
     for (const expense of expenses) {
-      if (matchedExpenseIds.has(expense.id)) continue;
-
-      let best = null;
+      if (expense.deletedAt) continue; // defensive — caller should already exclude these
+      if (confirmedExpenseIds.has(expense.id)) continue;
 
       for (const txn of transactions) {
-        if (matchedTxnIds.has(txn.id)) continue;
+        if (confirmedTxnIds.has(txn.id)) continue;
+        if (rejectedPairs.has(`${expense.id}|${txn.id}`)) continue;
+
         const { score, reasons } = scoreMatch(expense, txn);
         const matchType = scoreToType(score);
         if (!matchType) continue;
-        if (!best || score > best.score) {
-          best = { score, reasons, matchType, txn };
-        }
-      }
 
-      if (best) {
-        candidates.push({
-          expenseId: expense.id,
-          expense,
-          transactionId: best.txn.id,
-          transaction: best.txn,
-          score: best.score,
-          matchType: best.matchType,
-          reasons: best.reasons,
-        });
+        pairs.push({ expense, txn, score, reasons, matchType });
       }
     }
+
+    // Sort by score descending, then apply greedy 1:1 assignment.
+    // Greedy ensures the globally best pair is assigned first, preventing the
+    // same transaction from appearing in multiple candidates.
+    pairs.sort((a, b) => b.score - a.score);
+    const candidates = _selectCandidates(pairs, confirmedExpenseIds, confirmedTxnIds);
 
     return candidates.sort((a, b) => b.score - a.score);
   },
 
-  /** Confirm a match (from candidates or manually) */
+  /** Confirm a match (from candidates or manually). */
   confirmMatch(expenseId, transactionId, matchType = "manual", score = 0, reasons = []) {
     // Remove any existing pending match for this expense or transaction
     const all = this.getAll().filter(
@@ -204,13 +281,18 @@ export const reconciliationService = {
     all.push(match);
     lsSetArray(STORE, all);
 
-    // Update transaction status
     transactionService.updateStatus(transactionId, "matched");
 
     return match;
   },
 
-  /** Reject a candidate */
+  /**
+   * Record a rejection for a specific expense ↔ transaction pair.
+   *
+   * The rejection is stored as persistent evidence so this exact pair is never
+   * re-suggested. Either party remains eligible to match with other records.
+   * A rejected record carries no allocated amount — it is not a financial allocation.
+   */
   rejectCandidate(expenseId, transactionId) {
     const match = {
       id: generateId(),
@@ -229,7 +311,7 @@ export const reconciliationService = {
     return match;
   },
 
-  /** Undo a confirmed match */
+  /** Undo a confirmed match and reset the transaction to unmatched. */
   undoMatch(matchId) {
     const match = this.getById(matchId);
     if (!match) return;
@@ -237,7 +319,6 @@ export const reconciliationService = {
     const all = this.getAll().filter((m) => m.id !== matchId);
     lsSetArray(STORE, all);
 
-    // Reset transaction status
     transactionService.updateStatus(match.transactionId, "unmatched");
   },
 
@@ -247,17 +328,17 @@ export const reconciliationService = {
    * Returns { action: 'preserved' | 'removed' | 'none', match?, invalidReason? }
    *
    * Logic:
-   *   1. If no confirmed match exists → 'none'
-   *   2. If payment method is now non-credit_card → remove match ('removed')
-   *   3. Re-score vs matched transaction:
-   *      - score >= 50 → update score in place ('preserved')
-   *      - score < 50  → remove match ('removed')
+   *   1. No confirmed match → 'none'
+   *   2. Payment method changed to non-credit_card → remove ('removed')
+   *   3. Matched transaction no longer exists → remove ('removed')
+   *   4. Re-score:
+   *      - score >= 50 → update score/reasons/matchType/revalidatedAt ('preserved')
+   *      - score < 50  → remove ('removed')
    */
   revalidateMatchAfterExpenseEdit(expenseId, updatedExpense) {
     const match = this.getMatchForExpense(expenseId);
     if (!match) return { action: "none" };
 
-    // Payment method no longer credit_card → expense is ineligible for CC reconciliation
     if (updatedExpense.paymentMethod && updatedExpense.paymentMethod !== "credit_card") {
       this.undoMatch(match.id);
       return {
@@ -267,7 +348,6 @@ export const reconciliationService = {
       };
     }
 
-    // Look up the matched transaction
     const transaction = transactionService.getById(match.transactionId);
     if (!transaction) {
       const all = this.getAll().filter((m) => m.id !== match.id);
@@ -279,7 +359,6 @@ export const reconciliationService = {
       };
     }
 
-    // Re-score
     const { score, reasons } = scoreMatch(updatedExpense, transaction);
 
     if (score < 50) {
@@ -291,7 +370,6 @@ export const reconciliationService = {
       };
     }
 
-    // Still valid — update score and reasons in place
     const matchType = score >= 80 ? "strong_candidate" : "possible_candidate";
     const all = this.getAll().map((m) =>
       m.id === match.id
