@@ -44,8 +44,8 @@ export default function ExpensesPage() {
   async function load() {
     try {
       const [expenses, categories] = await Promise.all([
-        expenseRepository.getAll(),
-        categoryRepository.getAll(),
+        expenseRepository.getAll({ spam: false }),
+        categoryRepository.getAll({ spam: false }),
       ]);
 
       const expensesWithCategories = expenses.map((expense) => {
@@ -283,17 +283,9 @@ export default function ExpensesPage() {
         return;
       }
 
-      if (currentUser?.role === "owner") {
-        await expenseRepository.delete(id);
+      await expenseRepository.softDelete(id);
 
-        toast.success("Expense permanently deleted");
-      } else {
-        await expenseRepository.update(id, {
-          spam: true,
-        });
-
-        toast.success("Expense deleted");
-      }
+      toast.success("Expense deleted");
 
       await load();
 

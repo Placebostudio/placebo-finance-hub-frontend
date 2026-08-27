@@ -90,6 +90,28 @@ export const documentRepository = {
         return document;
     },
 
+    async getFileUrl(id) {
+
+        const response = await fetch(
+            `${BASE_URL}/${id}/file-url`
+        );
+
+
+        const result = await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                result.error ||
+                "Failed to get document file URL"
+            );
+        }
+
+
+        return result.url;
+    },
+
 
     // ============================================================
     // GET ALL DOCUMENTS
@@ -101,6 +123,10 @@ export const documentRepository = {
 
         if (filters.status) {
             params.set("status", filters.status);
+        }
+
+        if (filters.spam !== undefined && filters.spam !== null) {
+            params.set("spam", String(filters.spam));
         }
 
         const query =
@@ -332,7 +358,8 @@ export const documentRepository = {
 
                     body: JSON.stringify({
                         deleted_at:
-                            new Date().toISOString()
+                            new Date().toISOString(),
+                        spam: true
                     })
                 }
             );

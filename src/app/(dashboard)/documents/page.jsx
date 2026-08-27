@@ -276,7 +276,7 @@ export default function DocumentsPage() {
               const status = STATUS_LABELS[doc.status] ?? { label: doc.status, variant: "outline" };
               const isImage = doc.file_type?.startsWith("image/");
               const exp = expenseByDocId.get(doc.id);
-              const isCc = exp?.paymentMethod === "credit_card";
+              const isCc = exp?.payment_method === "credit_card";
               const isMatched = isCc && exp && matchedExpenseIds.has(exp.id);
               return (
                 <Card key={doc.id} className="group hover:border-primary/50 transition-colors">
@@ -288,8 +288,8 @@ export default function DocumentsPage() {
                     </div>
 
                     <div>
-                      <p className="text-sm font-medium truncate" title={doc.fileName}>
-                        {doc.fileName}
+                      <p className="text-sm font-medium truncate" title={doc.file_name}>
+                        {doc.file_name}
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {exp?.vendor_name ? `${exp.vendor_name} · ` : ""}

@@ -47,14 +47,19 @@ const EMPTY_FORM = {
   documentNumber: "",
   documentDate: "",
   dueDate: "",
+
   currency: "ILS",
   country: "",
+
   grossAmount: "",
   vatRate: "",
   netAmount: "",
   vatAmount: "",
+
   category_id: "",
+
   paymentMethod: "unknown",
+
   notes: "",
 };
 
@@ -227,6 +232,7 @@ export default function ReviewPage() {
   const [categories, setCategories] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [fxRateToSek, setFxRateToSek] = useState(1);
+  const [extraction, setExtraction] = useState(null);
 
   // Track whether the user has explicitly typed a VAT rate so we don't overwrite it
   const vatManuallySet = useRef(false);
@@ -237,93 +243,154 @@ export default function ReviewPage() {
     async function fetchData() {
       if (!id) return;
 
-      const [d, categoryData, existingExpense] = await Promise.all([
-        documentRepository.getById(id),
-        categoryRepository.getAll({ is_active: true }),
-        expenseRepository.getByDocumentId(id),
-      ]);
+      try {
+        // ============================================================
+        // LOAD REQUIRED DATA
+        // ============================================================
 
-      if (!d) {
-        setNotFound(true);
-        return;
-      }
+        const [d, categoryData, currencies] = await Promise.all([
+          documentRepository.getById(id),
 
-      setDoc(d);
-      setCategories(categoryData);
+          categoryRepository.getAll({
+            is_active: true,
+            spam: false,
+          }),
 
-      const currencies = await currencyRepository.getAll();
-      setCurrencies(currencies);
+          currencyRepository.getAll(),
+        ]);
 
-      const extraction =
-        await documentExtractionRepository.getById(id);
+        if (!d) {
+          setNotFound(true);
+          return;
+        }
 
-      // ============================================================
-      // LOAD EXISTING EXPENSE IF ONE ALREADY EXISTS
-      // ============================================================
+        setDoc(d);
+        setCategories(categoryData);
+        setCurrencies(currencies);
 
-      if (existingExpense) {
-        countryFromExtraction.current = false;
+        // ============================================================
+        // FIRST: CHECK FOR EXISTING EXPENSE
+        // ============================================================
 
-        setForm({
-          vendorName: existingExpense.vendor_name ?? "",
-          documentType: existingExpense.document_type ?? "receipt",
-          documentNumber: existingExpense.document_number ?? "",
-          documentDate: existingExpense.document_date ?? "",
-          dueDate: existingExpense.due_date ?? "",
+        let expense = null;
 
-          currency: existingExpense.currency ?? "ILS",
+        try {
+          expense = await expenseRepository.getByDocumentId(id);
+        } catch (error) {
+          if (error?.response?.status !== 404) {
+            throw error;
+          }
+        }
 
-          country:
-            existingExpense.country_code ?? "",
+        // ============================================================
+        // EXPENSE EXISTS
+        // ============================================================
 
-          grossAmount:
-            existingExpense.gross_amount != null
-              ? String(existingExpense.gross_amount)
+        if (expense) {
+          setExtraction(null);
+
+          countryFromExtraction.current = false;
+          vatManuallySet.current = true;
+
+          setForm({
+            vendorName: expense.vendor_name ?? "",
+            documentType: expense.document_type ?? "receipt",
+            documentNumber: expense.document_number ?? "",
+            documentDate: toDateInputValue(expense.document_date),
+            dueDate: toDateInputValue(expense.due_date),
+            currency: expense.currency ?? "ILS",
+
+            country: expense.country_code
+              ? COUNTRY_NAMES[expense.country_code] ??
+              expense.country_code
               : "",
 
-          netAmount:
-            existingExpense.net_amount != null
-              ? String(existingExpense.net_amount)
-              : "",
+            grossAmount:
+              expense.gross_amount != null
+                ? String(expense.gross_amount)
+                : "",
 
-          vatAmount:
-            existingExpense.vat_amount != null
-              ? String(existingExpense.vat_amount)
-              : "",
+            netAmount:
+              expense.net_amount != null
+                ? String(expense.net_amount)
+                : "",
 
-          vatRate:
-            existingExpense.vat_rate != null
-              ? String(existingExpense.vat_rate)
-              : "",
+            vatAmount:
+              expense.vat_amount != null
+                ? String(expense.vat_amount)
+                : "",
 
-          category_id:
-            existingExpense.category_id ?? "",
+            vatRate:
+              expense.vat_rate != null
+                ? String(expense.vat_rate)
+                : expense.country_code
+                  ? (() => {
+                    const rate = getCountryVatRate(
+                      expense.country_code
+                    );
 
-          paymentMethod:
-            existingExpense.payment_method ?? "unknown",
+                    return rate != null
+                      ? String(rate)
+                      : "";
+                  })()
+                  : "",
 
-          notes:
-            existingExpense.notes ?? "",
-        });
-      }
+            category_id: expense.category_id ?? "",
+            paymentMethod: expense.payment_method ?? "unknown",
+            notes: expense.notes ?? "",
+          });
 
-      // ============================================================
-      // NO EXPENSE YET → LOAD FROM EXTRACTION
-      // ============================================================
+          // ============================================================
+          // NO EXPENSE
+          // → CHECK DOCUMENT EXTRACTION
+          // ============================================================
 
-      else if (extraction?.fields) {
-        countryFromExtraction.current = true;
+        } else {
+          let extractionData = null;
 
-        setForm(
-          formFromExtraction(
-            extraction.fields,
-            categoryData
-          )
+          try {
+            extractionData =
+              await documentExtractionRepository.getById(id);
+          } catch (error) {
+            if (error?.response?.status !== 404) {
+              throw error;
+            }
+          }
+
+          setExtraction(extractionData);
+
+          if (extractionData?.fields) {
+            countryFromExtraction.current = true;
+            vatManuallySet.current = false;
+
+            setForm(
+              formFromExtraction(
+                extractionData.fields,
+                categoryData
+              )
+            );
+          }
+        }
+
+        // ============================================================
+        // DOCUMENT FILE
+        // ============================================================
+
+        if (d.storage_path) {
+          const fileUrl = await documentRepository.getFileUrl(id);
+          setFileUrl(fileUrl);
+        }
+
+      } catch (err) {
+        console.error(
+          "Failed to load document data:",
+          err
         );
-      }
 
-      if (d.url) {
-        setFileUrl(d.url);
+        toast.error(
+          err.message ||
+          "Failed to load document"
+        );
       }
     }
 
@@ -434,6 +501,84 @@ export default function ReviewPage() {
     setSaving(true);
 
     try {
+      // ============================================================
+      // COUNTRY
+      // ============================================================
+
+      const country_code =
+        form.country
+          ? Object.keys(COUNTRY_NAMES).find(
+            (code) => COUNTRY_NAMES[code] === form.country
+          ) ?? form.country
+          : null;
+
+      // ============================================================
+      // VAT
+      // ============================================================
+
+      const vat_rate =
+        form.vatRate !== ""
+          ? parseFloat(form.vatRate)
+          : getCountryVatRate(country_code);
+
+      // ============================================================
+      // AMOUNTS
+      // ============================================================
+
+      const gross_amount =
+        form.grossAmount !== ""
+          ? parseFloat(form.grossAmount)
+          : null;
+
+      const net_amount =
+        form.netAmount !== ""
+          ? parseFloat(form.netAmount)
+          : null;
+
+      const vat_amount =
+        form.vatAmount !== ""
+          ? parseFloat(form.vatAmount)
+          : null;
+
+      // New expenses start unpaid.
+      const paid_amount = 0;
+
+      // ============================================================
+      // FX → SEK
+      //
+      // fxRateToSek is already calculated by the useEffect:
+      //
+      // EUR → SEK / EUR → selected currency
+      //
+      // SEK itself gives 1.
+      // ============================================================
+
+      if (fxRateToSek == null) {
+        throw new Error(
+          `Unable to determine FX rate for ${form.currency}`
+        );
+      }
+
+      const roundMoney = (value) =>
+        Math.round(value * 100) / 100;
+
+      const gross_amount_sek =
+        gross_amount != null
+          ? roundMoney(gross_amount * fxRateToSek)
+          : null;
+
+      const paid_amount_sek =
+        roundMoney(paid_amount * fxRateToSek);
+
+      const vat_amount_sek =
+        vat_amount != null
+          ? roundMoney(vat_amount * fxRateToSek)
+          : null;
+
+      // ============================================================
+      // EXPENSE DATA
+      // ============================================================
+
       const expenseData = {
         document_id: id,
 
@@ -441,31 +586,35 @@ export default function ReviewPage() {
 
         document_type: form.documentType,
         document_number: form.documentNumber || null,
+
         document_date: form.documentDate,
         due_date: form.dueDate || null,
 
         currency: form.currency,
-        country_code: countryNameToCode(form.country),
+        country_code,
 
-        net_amount:
-          form.netAmount !== ""
-            ? parseFloat(form.netAmount)
+        net_amount,
+        vat_amount,
+        vat_rate,
+        gross_amount,
+
+        paid_amount,
+
+        // FX information
+        fx_rate: fxRateToSek,
+        fx_date:
+          fxRateToSek != null
+            ? new Date().toISOString().slice(0, 10)
+            : null,
+        fx_source:
+          fxRateToSek != null
+            ? "frankfurter"
             : null,
 
-        vat_amount:
-          form.vatAmount !== ""
-            ? parseFloat(form.vatAmount)
-            : null,
-
-        vat_rate:
-          form.vatRate !== ""
-            ? parseFloat(form.vatRate)
-            : null,
-
-        gross_amount:
-          form.grossAmount !== ""
-            ? parseFloat(form.grossAmount)
-            : null,
+        // SEK values
+        gross_amount_sek,
+        paid_amount_sek,
+        vat_amount_sek,
 
         category_id: form.category_id,
 
@@ -476,40 +625,85 @@ export default function ReviewPage() {
         status,
       };
 
-      // Check if an expense already exists for this document
-      const existingExpense =
-        await expenseRepository.getByDocumentId(id);
+      // ============================================================
+      // DEBUG
+      // ============================================================
+
+      console.log("Expense data:", expenseData);
+
+      console.table({
+        vendor_name: expenseData.vendor_name,
+        document_date: expenseData.document_date,
+        currency: expenseData.currency,
+        gross_amount: expenseData.gross_amount,
+        fx_rate: expenseData.fx_rate,
+        gross_amount_sek: expenseData.gross_amount_sek,
+        paid_amount: expenseData.paid_amount,
+        paid_amount_sek: expenseData.paid_amount_sek,
+        vat_amount: expenseData.vat_amount,
+        vat_amount_sek: expenseData.vat_amount_sek,
+        category_id: expenseData.category_id,
+        payment_method: expenseData.payment_method,
+      });
+
+      // ============================================================
+      // CHECK IF EXPENSE ALREADY EXISTS
+      // ============================================================
+
+      let existingExpense = null;
+
+      try {
+        existingExpense =
+          await expenseRepository.getByDocumentId(id);
+      } catch (error) {
+        // 404 simply means there is no expense yet.
+        if (error?.response?.status !== 404) {
+          throw error;
+        }
+      }
 
       let expense;
 
       if (existingExpense) {
-        // Existing expense → update it.
-        // The repository handles the audit log.
-        expense = await expenseRepository.update(
-          existingExpense.id,
-          expenseData
-        );
+        // ==========================================================
+        // EXISTING EXPENSE → UPDATE
+        // ==========================================================
+
+        expense =
+          await expenseRepository.update(
+            existingExpense.id,
+            expenseData
+          );
       } else {
-        // No expense yet → create it.
-        // The repository handles the audit log.
-        expense = await expenseRepository.create(
-          expenseData
-        );
+        // ==========================================================
+        // NO EXPENSE → CREATE
+        // ==========================================================
+
+        expense =
+          await expenseRepository.create(
+            expenseData
+          );
       }
 
-      // ------------------------------------------------------------
-      // APPROVING THE EXPENSE ALSO APPROVES THE RELATED DOCUMENT
-      // ------------------------------------------------------------
+      // ============================================================
+      // KEEP EXTRACTION STATE
+      // ============================================================
+
+      setExtraction(extraction);
+
+      // ============================================================
+      // APPROVING EXPENSE ALSO APPROVES DOCUMENT
+      // ============================================================
 
       if (status === "approved") {
-        // The document repository handles:
-        // 1. Getting the before state
-        // 2. Updating the document
-        // 3. Creating the document audit log
         await documentRepository.update(id, {
           status: "approved",
         });
       }
+
+      // ============================================================
+      // SUCCESS
+      // ============================================================
 
       toast.success(
         status === "approved"
@@ -524,10 +718,14 @@ export default function ReviewPage() {
       }
 
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Failed to save expense:",
+        err
+      );
 
       toast.error(
-        err.message || "Failed to save expense"
+        err.message ||
+        "Failed to save expense"
       );
 
     } finally {
@@ -548,15 +746,14 @@ export default function ReviewPage() {
 
   if (!doc) return null;
 
-  const extraction = doc.extractionResult;
   const ef = extraction?.fields ?? {};
   const hasExtraction = !!extraction;
   const validationIssues = extraction?.validationIssues ?? [];
 
   // Check whether net + vatAmount ≈ gross for live form values
-  const liveGross = parseFloat(form.grossAmount) || 0;
-  const liveNet = parseFloat(form.netAmount) || 0;
-  const liveVat = parseFloat(form.vatAmount) || 0;
+  const liveGross = parseFloat(form.gross_amount) || 0;
+  const liveNet = parseFloat(form.net_amount) || 0;
+  const liveVat = parseFloat(form.vat_amount) || 0;
   const liveSum = Math.round((liveNet + liveVat) * 100) / 100;
   const liveAmountMismatch = liveGross > 0 && liveNet > 0 && liveVat > 0 &&
     Math.abs(liveSum - liveGross) > Math.max(0.05, liveGross * 0.005);
@@ -564,7 +761,7 @@ export default function ReviewPage() {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title={doc.fileName}
+        title={doc.file_name}
         description={
           hasExtraction
             ? `Extracted via ${METHOD_LABELS[extraction.method] ?? extraction.method} — verify all values`
@@ -591,7 +788,7 @@ export default function ReviewPage() {
               </CardHeader>
               <CardContent>
                 {fileUrl ? (
-                  doc.fileType === "application/pdf" ? (
+                  doc.file_type === "application/pdf" ? (
                     <iframe
                       src={fileUrl}
                       className="w-full rounded border"
@@ -731,7 +928,7 @@ export default function ReviewPage() {
                       type="date"
                       value={formatDateForInput(form.documentDate)}
                       onChange={(e) =>
-                        setFormData({
+                        setForm({
                           ...form,
                           documentDate: e.target.value
                         })
@@ -743,8 +940,8 @@ export default function ReviewPage() {
                       type="date"
                       value={formatDateForInput(form.dueDate)}
                       onChange={(e) =>
-                        setFormData({
-                          ...formData,
+                        setForm({
+                          ...form,
                           dueDate: e.target.value
                         })
                       }

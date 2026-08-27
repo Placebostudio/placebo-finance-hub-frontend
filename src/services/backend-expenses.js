@@ -20,6 +20,10 @@ export const expenseRepository = {
             params.set("period", filters.period);
         }
 
+        if (filters.spam !== undefined && filters.spam !== null) {
+            params.set("spam", String(filters.spam));
+        }
+
         const query = params.toString();
 
         const response = await fetch(
@@ -239,7 +243,6 @@ export const expenseRepository = {
         // Get old version BEFORE changing it
         const before = await this.getById(id);
 
-
         // ========================================================
         // UPDATE EXPENSE
         // ========================================================
@@ -254,7 +257,9 @@ export const expenseRepository = {
                 },
 
                 body: JSON.stringify({
-                    deleted_at: new Date().toISOString()
+                    deleted_at:
+                        new Date().toISOString(),
+                    spam: true
                 })
             }
         );
@@ -268,10 +273,8 @@ export const expenseRepository = {
             );
         }
 
-
         const updatedExpense =
             result.expense ?? result;
-
 
         // ========================================================
         // AUDIT LOG
@@ -301,7 +304,6 @@ export const expenseRepository = {
                 user_agent: navigator.userAgent
             });
         }
-
 
         return updatedExpense;
     },

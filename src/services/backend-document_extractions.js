@@ -13,6 +13,10 @@ export const documentExtractionRepository = {
 
         const params = new URLSearchParams();
 
+        if (filters.spam) {
+            params.set("spam", filters.spam);
+        }
+
         Object.entries(filters).forEach(([key, value]) => {
 
             if (

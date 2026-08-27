@@ -13,6 +13,10 @@ export const categoryRepository = {
 
         const params = new URLSearchParams();
 
+        if (filters.spam !== undefined && filters.spam !== null) {
+            params.set("spam", String(filters.spam));
+        }
+
         Object.entries(filters).forEach(([key, value]) => {
 
             if (

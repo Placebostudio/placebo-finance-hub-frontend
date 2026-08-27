@@ -23,27 +23,35 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { documentRepository } from "@/services/backend-documents";
 import { expenseRepository } from "@/services/backend-expenses";
+import { getCountryVatRate } from "@/config/vat-config";
 
 /** Build editable form state from a persisted expense record */
 function formFromExpense(expense) {
   return {
-    vendorName: expense.vendorName ?? "",
-    documentType: expense.documentType ?? "receipt",
-    documentNumber: expense.documentNumber ?? "",
-    documentDate: expense.documentDate ?? "",
-    dueDate: expense.dueDate ?? "",
+    vendorName: expense.vendor_name ?? "",
+    documentType: expense.document_type ?? "receipt",
+    documentNumber: expense.document_number ?? "",
+    documentDate: expense.document_date ?? "",
+    dueDate: expense.due_date ?? "",
     currency: expense.currency ?? "ILS",
     country: expense.country ?? "",
+    countryCode: expense.country_code ?? "",
     // Show 0-rate as blank so it reads as "not set"
-    vatRate: expense.vatRate != null && expense.vatRate !== 0
-      ? String(expense.vatRate)
-      : "",
-    grossAmount: expense.grossAmount != null ? String(expense.grossAmount) : "",
-    netAmount: expense.netAmount != null ? String(expense.netAmount) : "",
-    vatAmount: expense.vatAmount != null ? String(expense.vatAmount) : "",
+    vatRate:
+      expense.vat_rate != null && expense.vat_rate !== 0
+        ? String(expense.vat_rate)
+        : expense.country_code
+          ? (() => {
+            const rate = getCountryVatRate(expense.country_code);
+            return rate != null ? String(rate) : "";
+          })()
+          : "",
+    grossAmount: expense.gross_amount != null ? String(expense.gross_amount) : "",
+    netAmount: expense.net_amount != null ? String(expense.netAmount) : "",
+    vatAmount: expense.vat_amount != null ? String(expense.vat_amount) : "",
     category: expense.category ?? "",
-    paymentMethod: expense.paymentMethod ?? "unknown",
-    cardLastFour: expense.cardLastFour ?? "",
+    paymentMethod: expense.payment_method ?? "unknown",
+    // cardLastFour: expense.cardLastFour ?? "",
     notes: expense.notes ?? "",
   };
 }
@@ -73,25 +81,59 @@ export default function EditDocumentPage() {
 
   useEffect(() => {
     if (!docId) return;
+
     async function load() {
-      const d = await documentRepository.getById(docId);
-      if (!d) { setNotFound(true); return; }
-      setDoc(d);
+      try {
+        const d = await documentRepository.getById(docId);
 
-      const exp = await expenseRepository.getByDocumentId(docId);
-      if (!exp) { setNotFound(true); return; }
-      setExpense(exp);
+        if (!d) {
+          setNotFound(true);
+          return;
+        }
+
+        setDoc(d);
+
+        // Document uses storage_path, not url
+        if (d.storage_path) {
+          setFileUrl(d.storage_path);
+        } 
+
+        const exp =
+          await expenseRepository.getByDocumentId(docId);
+
+        if (!exp) {
+          setNotFound(true);
+          return;
+        }
+
+        setExpense(exp);
+
+        const initial = formFromExpense(exp);
+
+        setForm(initial);
+        setOriginalForm(initial);
+
+      } catch (err) {
+        console.error("Failed to load document:", err);
+
+        toast.error(
+          err.message || "Failed to load document"
+        );
+
+        setNotFound(true);
+      }
     }
+
     load();
-
-    const initial = formFromExpense(exp);
-    setForm(initial);
-    setOriginalForm(initial);
-
-
   }, [docId]);
 
-  useEffect(() => () => { if (fileUrl) URL.revokeObjectURL(fileUrl); }, [fileUrl]);
+  useEffect(() => {
+    return () => {
+      if (fileUrl) {
+        URL.revokeObjectURL(fileUrl);
+      }
+    };
+  }, [fileUrl]);
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -123,6 +165,8 @@ export default function EditDocumentPage() {
 
     setSaving(true);
 
+    console.log(form)
+
     try {
       const updatedData = {
         vendor_name: form.vendorName,
@@ -132,12 +176,12 @@ export default function EditDocumentPage() {
         due_date: form.dueDate || null,
 
         currency: form.currency,
-        country_code: countryNameToCode(form.country),
+        country_code: countryNameToCode(form.countryCode),
 
         vat_rate:
           form.vatRate !== ""
             ? parseFloat(form.vatRate)
-            : null,
+            : getCountryVatRate(country_code),
 
         gross_amount:
           form.grossAmount !== ""
@@ -244,7 +288,7 @@ export default function EditDocumentPage() {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title={doc.fileName}
+        title={doc.file_name}
         description="Edit approved document — updates are reflected immediately across all views"
         actions={
           <div className="flex items-center gap-2">
@@ -502,7 +546,7 @@ export default function EditDocumentPage() {
                   </Select>
                 </Field>
 
-                {form.paymentMethod === "credit_card" && (
+                {/* {form.paymentMethod === "credit_card" && (
                   <Field label="Card Last 4 Digits">
                     <Input
                       value={form.cardLastFour}
@@ -513,7 +557,7 @@ export default function EditDocumentPage() {
                       maxLength={4}
                     />
                   </Field>
-                )}
+                )} */}
               </div>
 
               <Separator />
