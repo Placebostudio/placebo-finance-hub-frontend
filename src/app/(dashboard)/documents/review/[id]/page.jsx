@@ -629,22 +629,22 @@ export default function ReviewPage() {
       // DEBUG
       // ============================================================
 
-      console.log("Expense data:", expenseData);
+      // console.log("Expense data:", expenseData);
 
-      console.table({
-        vendor_name: expenseData.vendor_name,
-        document_date: expenseData.document_date,
-        currency: expenseData.currency,
-        gross_amount: expenseData.gross_amount,
-        fx_rate: expenseData.fx_rate,
-        gross_amount_sek: expenseData.gross_amount_sek,
-        paid_amount: expenseData.paid_amount,
-        paid_amount_sek: expenseData.paid_amount_sek,
-        vat_amount: expenseData.vat_amount,
-        vat_amount_sek: expenseData.vat_amount_sek,
-        category_id: expenseData.category_id,
-        payment_method: expenseData.payment_method,
-      });
+      // console.table({
+      //   vendor_name: expenseData.vendor_name,
+      //   document_date: expenseData.document_date,
+      //   currency: expenseData.currency,
+      //   gross_amount: expenseData.gross_amount,
+      //   fx_rate: expenseData.fx_rate,
+      //   gross_amount_sek: expenseData.gross_amount_sek,
+      //   paid_amount: expenseData.paid_amount,
+      //   paid_amount_sek: expenseData.paid_amount_sek,
+      //   vat_amount: expenseData.vat_amount,
+      //   vat_amount_sek: expenseData.vat_amount_sek,
+      //   category_id: expenseData.category_id,
+      //   payment_method: expenseData.payment_method,
+      // });
 
       // ============================================================
       // CHECK IF EXPENSE ALREADY EXISTS
