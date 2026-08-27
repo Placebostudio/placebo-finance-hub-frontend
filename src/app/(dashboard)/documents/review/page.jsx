@@ -45,7 +45,6 @@ export default function ReviewQueuePage() {
     if (!id) return;
 
     try {
-      // Get the document before changing/deleting it
       const doc = await documentRepository.getById(id);
 
       if (!doc) {
@@ -53,17 +52,9 @@ export default function ReviewQueuePage() {
         return;
       }
 
-      if (currentUser?.role === "owner") {
-        // Owner → permanent delete
-        await documentRepository.delete(id);
+      await documentRepository.softDelete(id);
 
-        toast.success("Document permanently deleted");
-      } else {
-        // Everyone else → soft delete
-        await documentRepository.softDelete(id);
-
-        toast.success("Document removed from queue");
-      }
+      toast.success("Document removed from queue");
 
       await load();
 

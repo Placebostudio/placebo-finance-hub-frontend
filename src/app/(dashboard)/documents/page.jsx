@@ -137,24 +137,13 @@ export default function DocumentsPage() {
     if (!confirm("Delete this document?")) return;
 
     try {
+      await documentRepository.softDelete(id);
 
-      if (currentUser?.role === "owner") {
-
-        await documentRepository.delete(id);
-
-        toast.success("Document permanently deleted");
-
-      } else {
-
-        await documentRepository.softDelete(id);
-
-        toast.success("Document deleted");
-      }
+      toast.success("Document deleted");
 
       await load();
 
     } catch (err) {
-
       console.error("Failed to delete document:", err);
 
       toast.error(

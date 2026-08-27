@@ -94,11 +94,11 @@ function blankRow() {
 
 // ── Stage label helper ────────────────────────────────────────────────────────
 function stageLabel(stage, detail) {
-  if (stage === "pdf")     return detail ?? "Reading PDF…";
-  if (stage === "render")  return detail ?? "Rendering pages…";
-  if (stage === "ocr")     return detail ?? "Running OCR…";
+  if (stage === "pdf") return detail ?? "Reading PDF…";
+  if (stage === "render") return detail ?? "Rendering pages…";
+  if (stage === "ocr") return detail ?? "Running OCR…";
   if (stage === "parsing") return detail ?? "Detecting transactions…";
-  if (stage === "done")    return detail;
+  if (stage === "done") return detail;
   return detail ?? "Processing…";
 }
 
@@ -110,22 +110,22 @@ export default function TransactionsPage() {
   const selectedPeriod = buildPeriod(periodYear, periodMonth);
 
   // ── Data state ────────────────────────────────────────────────────────────
-  const [statements, setStatements]     = useState([]);
+  const [statements, setStatements] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [selectedStatement, setSelectedStatement] = useState(null);
-  const [search, setSearch]             = useState("");
+  const [search, setSearch] = useState("");
   const [importPreview, setImportPreview] = useState([]);
-  const [importError, setImportError]   = useState(null);
-  const [isImporting, setIsImporting]   = useState(false);
+  const [importError, setImportError] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // PDF import state
-  const [pdfFile, setPdfFile]           = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
   const [pdfExtracting, setPdfExtracting] = useState(false);
-  const [pdfProgress, setPdfProgress]   = useState({ percent: 0, label: "" });
-  const [pdfRows, setPdfRows]           = useState(null);
-  const [pdfIssues, setPdfIssues]       = useState([]);
+  const [pdfProgress, setPdfProgress] = useState({ percent: 0, label: "" });
+  const [pdfRows, setPdfRows] = useState(null);
+  const [pdfIssues, setPdfIssues] = useState([]);
   const [pdfExtractedText, setPdfExtractedText] = useState("");
-  const [editingRow, setEditingRow]     = useState(null);
+  const [editingRow, setEditingRow] = useState(null);
   const [isConfirming, setIsConfirming] = useState(false);
   // showManual removed — Add Manually flow is not available
 
@@ -137,11 +137,11 @@ export default function TransactionsPage() {
   useEffect(() => { load(); }, []);
 
   // ── Period-scoped derived data ────────────────────────────────────────────
-  const periodStatements   = statements.filter((s) => s.period === selectedPeriod);
+  const periodStatements = statements.filter((s) => s.period === selectedPeriod);
   const periodStatementIds = new Set(periodStatements.map((s) => s.id));
   const periodTransactions = transactions.filter((t) => periodStatementIds.has(t.statementId));
-  const periodMatched      = periodTransactions.filter((t) => t.status === "matched").length;
-  const periodUnmatched    = periodTransactions.filter((t) => t.status !== "matched" && t.status !== "ignored").length;
+  const periodMatched = periodTransactions.filter((t) => t.status === "matched").length;
+  const periodUnmatched = periodTransactions.filter((t) => t.status !== "matched" && t.status !== "ignored").length;
   const duplicateStatementExists = periodStatements.length > 0;
 
   // ── Period change resets statement selection ──────────────────────────────
@@ -197,10 +197,10 @@ export default function TransactionsPage() {
     setTimeout(() => {
       const rows = importPreview.map((row) => ({
         transactionDate: row.date || row.Date || row["Transaction Date"] || row["תאריך"] || "",
-        description:     row.description || row.Description || row.Merchant || row["תיאור"] || "Unknown",
-        billedAmount:    Math.abs(parseFloat((row.amount || row.Amount || row.Debit || row["סכום"] || "0").replace(/[^0-9.,-]/g, "").replace(",", "."))),
-        billedCurrency:  row.currency || row.Currency || "ILS",
-        cardLastFour:    row.card || row.Card || row["כרטיס"] || "",
+        description: row.description || row.Description || row.Merchant || row["תיאור"] || "Unknown",
+        billedAmount: Math.abs(parseFloat((row.amount || row.Amount || row.Debit || row["סכום"] || "0").replace(/[^0-9.,-]/g, "").replace(",", "."))),
+        billedCurrency: row.currency || row.Currency || "ILS",
+        cardLastFour: row.card || row.Card || row["כרטיס"] || "",
       }));
       const created = transactionService.bulkCreate(rows, stmtId, stmtPeriod);
       statementService.update(stmtId, { transactionCount: (statementService.getById(stmtId)?.transactionCount ?? 0) + created.length });
@@ -212,38 +212,48 @@ export default function TransactionsPage() {
   };
 
   const handleDeleteStatement = async (id) => {
-    if (!confirm("Delete this statement and all its transactions?")) return;
-    const stmt = statementService.getById(id);
-    if (currentUser?.role === "owner") {
-      transactionService.deleteByStatement(id);
-      await statementService.hardDelete(id);
-      auditService.log({
-        actorId: currentUser.id,
-        actorName: currentUser.fullName,
-        action: "delete",
-        entityType: "statement",
-        entityId: id,
-        entityName: stmt?.fileName || stmt?.period || id,
-        before: stmt,
-        after: null,
-      });
-      toast.success("Statement permanently deleted");
-    } else {
-      statementService.softDelete(id, currentUser?.id, currentUser?.fullName);
-      auditService.log({
-        actorId: currentUser?.id,
-        actorName: currentUser?.fullName,
-        action: "soft_delete_requested",
-        entityType: "statement",
-        entityId: id,
-        entityName: stmt?.fileName || stmt?.period || id,
-        before: stmt,
-        after: null,
-      });
-      toast.success("Statement deleted");
+
+    if (!confirm("Delete this statement and all its transactions?")) {
+      return;
     }
-    if (selectedStatement === id) setSelectedStatement(null);
-    load();
+
+    try {
+
+      const stmt =
+        await statementService.getById(id);
+
+      if (!stmt) {
+        toast.error("Statement not found");
+        return;
+      }
+
+      // Everyone → soft delete
+      await statementService.softDelete(
+        id,
+        currentUser?.id,
+        currentUser?.fullName
+      );
+
+      toast.success("Statement deleted");
+
+      if (selectedStatement === id) {
+        setSelectedStatement(null);
+      }
+
+      await load();
+
+    } catch (err) {
+
+      console.error(
+        "Failed to delete statement:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to delete statement"
+      );
+    }
   };
 
   // ── PDF statement import ──────────────────────────────────────────────────
@@ -533,11 +543,10 @@ export default function TransactionsPage() {
             {!pdfFile ? (
               <div
                 {...getPDFRootProps()}
-                className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${
-                  isPDFDragActive
+                className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${isPDFDragActive
                     ? "border-primary bg-primary/5"
                     : "border-border hover:border-primary/50 hover:bg-muted/50"
-                }`}
+                  }`}
               >
                 <input {...getPDFInputProps()} />
                 <FileText className="h-10 w-10 text-muted-foreground mb-3" />
@@ -736,11 +745,10 @@ export default function TransactionsPage() {
             )}
             <div
               {...getCSVRootProps()}
-              className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${
-                isCSVDragActive
+              className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${isCSVDragActive
                   ? "border-primary bg-primary/5"
                   : "border-border hover:border-primary/50 hover:bg-muted/50"
-              }`}
+                }`}
             >
               <input {...getCSVInputProps()} />
               <Upload className="h-10 w-10 text-muted-foreground mb-3" />
