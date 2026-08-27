@@ -10,16 +10,33 @@ export const matchRepository = {
     // GET ALL MATCHES
     // ============================================================
 
-    async getAll() {
+    async getAll(filters = {}) {
 
-        const response = await fetch(
-            BASE_URL
-        );
+        const params = new URLSearchParams();
+
+        Object.entries(filters).forEach(([key, value]) => {
+
+            if (
+                value !== undefined &&
+                value !== null &&
+                value !== ""
+            ) {
+                params.append(key, value);
+            }
+
+        });
+
+        const queryString = params.toString();
+
+        const url = queryString
+            ? `${BASE_URL}?${queryString}`
+            : BASE_URL;
+
+        const response = await fetch(url);
 
         const data = await response.json();
 
         if (!response.ok) {
-
             throw new Error(
                 data.error || "Failed to get matches"
             );
@@ -27,7 +44,6 @@ export const matchRepository = {
 
         return data;
     },
-
 
     // ============================================================
     // GET ONE MATCH
