@@ -14,6 +14,11 @@ export const useAuthStore = create(
     (set) => ({
       user: null,
       isAuthenticated: false,
+      // True only after the persist middleware has finished reading localStorage.
+      // While false, auth state is unknown — guards must not redirect yet.
+      _hasHydrated: false,
+
+      setHasHydrated: (value) => set({ _hasHydrated: value }),
 
       login: async (username, password) => {
         // Throws on invalid credentials or network errors — caller handles the error
@@ -37,14 +42,17 @@ export const useAuthStore = create(
     {
       name: "pfh_auth_session",
       partialize: (state) => ({
+        // _hasHydrated is intentionally excluded — it must always start false
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
-      // Migrate persisted session roles on rehydration
       onRehydrateStorage: () => (state) => {
+        // Migrate persisted session roles on rehydration
         if (state?.user?.role && ROLE_MIGRATION[state.user.role]) {
           state.user = { ...state.user, role: migrateRole(state.user.role) };
         }
+        // Signal that localStorage has been read and applied
+        state?.setHasHydrated(true);
       },
     }
   )

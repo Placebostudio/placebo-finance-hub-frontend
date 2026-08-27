@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,27 +8,36 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthStore } from "@/store/auth";
-import { userRepository } from "../../../services/backend-users";
+
+/**
+ * Validates a returnTo value to prevent open-redirect vulnerabilities.
+ * Only accepts internal paths: must start with "/" but not "//".
+ */
+function getValidReturnTo(raw) {
+  if (!raw) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  return raw;
+}
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuthStore();
+  const searchParams = useSearchParams();
+  const { login, isAuthenticated, _hasHydrated } = useAuthStore();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  const returnTo = getValidReturnTo(searchParams.get("returnTo"));
+  const destination = returnTo || "/dashboard";
+
+  // Once auth state is known, redirect away if the user is already authenticated.
   useEffect(() => {
-
-    const currentUser =
-      userRepository.getLoggedInUser();
-
-    if (currentUser) {
-      router.replace("/dashboard");
+    if (_hasHydrated && isAuthenticated) {
+      router.replace(destination);
     }
-
-  }, [router]);
+  }, [_hasHydrated, isAuthenticated, destination, router]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -40,12 +49,27 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(username, password);
-      router.push("/dashboard");
+      router.push(destination);
     } catch (err) {
       setError(err.message || "Invalid username or password.");
       setIsLoading(false);
     }
   };
+
+  // Auth state is still being restored from localStorage — show a neutral
+  // loading indicator rather than briefly flashing the login form.
+  if (!_hasHydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  // Already authenticated — redirect is in flight via the useEffect above.
+  if (isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-secondary/20 p-4">

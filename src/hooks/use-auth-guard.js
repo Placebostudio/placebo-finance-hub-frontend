@@ -1,17 +1,21 @@
 "use client";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 
 export function useAuthGuard() {
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, user, _hasHydrated } = useAuthStore();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push("/login");
-    }
-  }, [isAuthenticated, router]);
+    // Do not act while the persisted session is still being read from localStorage.
+    if (!_hasHydrated) return;
 
-  return { isAuthenticated, user };
+    if (!isAuthenticated) {
+      router.push(`/login?returnTo=${encodeURIComponent(pathname)}`);
+    }
+  }, [_hasHydrated, isAuthenticated, router, pathname]);
+
+  return { isAuthenticated, user, _hasHydrated };
 }
