@@ -18,15 +18,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { PageHeader } from "@/components/layout/page-header";
-import { statementService } from "@/services/statement.service";
-import { auditService } from "@/services/audit.service";
 import { useAuthStore } from "@/store/auth";
-import { transactionService } from "@/services/transaction.service";
 import { APP_CONFIG } from "@/config";
 import { formatCurrency, formatDate, generateId, buildPeriod, periodLabel } from "@/lib/utils";
 import { PeriodSelector } from "@/components/layout/period-selector";
 import { usePeriodStore } from "@/store/period";
 import { toast } from "sonner";
+
+import { statementService } from "@/services/statement.service";
+import { auditService } from "@/services/audit.service";
+import { transactionService } from "@/services/transaction.service";
+
+import { transactionRepository } from "@/services/backend-transactions";
+import { statementRepository } from "@/services/backend-statements";
 
 // ── Preview row edit dialog ───────────────────────────────────────────────────
 function EditRowDialog({ row, open, onClose, onSave }) {
@@ -129,12 +133,37 @@ export default function TransactionsPage() {
   const [isConfirming, setIsConfirming] = useState(false);
   // showManual removed — Add Manually flow is not available
 
-  function load() {
-    setStatements(statementService.getAll());
-    setTransactions(transactionService.getAll());
+  async function load() {
+    try {
+
+      const [
+        statementsData,
+        transactionsData
+      ] = await Promise.all([
+        statementRepository.getAll(),
+        transactionRepository.getAll()
+      ]);
+
+      setStatements(statementsData);
+      setTransactions(transactionsData);
+
+    } catch (err) {
+
+      console.error(
+        "Failed to load statements and transactions:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to load finance data"
+      );
+    }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   // ── Period-scoped derived data ────────────────────────────────────────────
   const periodStatements = statements.filter((s) => s.period === selectedPeriod);
@@ -280,6 +309,17 @@ export default function TransactionsPage() {
       const result = await extractStatement(pdfFile, ({ stage, detail, percent }) => {
         setPdfProgress({ percent, label: stageLabel(stage, detail) });
       });
+      // See everything extracted from the PDF
+      // console.log("PDF EXTRACTION RESULT:", result);
+
+      // // See the raw extracted text
+      // console.log("PDF EXTRACTED TEXT:", result.extractedText);
+
+      // // See the transactions it detected
+      // console.log("PDF TRANSACTIONS:", result.transactions);
+
+      // See extraction issues
+      // console.log("PDF ISSUES:", result.issues);
       setPdfRows(result.transactions);
       setPdfIssues(result.issues ?? []);
       setPdfExtractedText(result.extractedText ?? "");
@@ -413,43 +453,139 @@ export default function TransactionsPage() {
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead>Date</TableHead>
+                        <TableHead>Posting Date</TableHead>
                         <TableHead>Description</TableHead>
-                        <TableHead>Card</TableHead>
+                        <TableHead>Counterparty</TableHead>
+                        <TableHead>Reference</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
                         <TableHead>Currency</TableHead>
+                        <TableHead className="text-right">Original Amount</TableHead>
+                        <TableHead>Original Currency</TableHead>
+                        <TableHead>FX Rate</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Coverage</TableHead>
+                        <TableHead>Ignore Reason</TableHead>
                       </TableRow>
                     </TableHeader>
+
                     <TableBody>
                       {filtered.map((txn) => (
                         <TableRow key={txn.id}>
-                          <TableCell className="text-sm whitespace-nowrap">{formatDate(txn.transactionDate)}</TableCell>
-                          <TableCell className="text-sm max-w-[200px] truncate">{txn.description}</TableCell>
+
+                          {/* Transaction date */}
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {formatDate(txn.transactionDate)}
+                          </TableCell>
+
+                          {/* Posting date */}
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {txn.postingDate
+                              ? formatDate(txn.postingDate)
+                              : "—"}
+                          </TableCell>
+
+                          {/* Description */}
+                          <TableCell className="text-sm max-w-[220px] truncate">
+                            {txn.description || "—"}
+                          </TableCell>
+
+                          {/* Counterparty */}
+                          <TableCell className="text-sm max-w-[180px] truncate">
+                            {txn.counterpartyRef || "—"}
+                          </TableCell>
+
+                          {/* Counterparty/reference */}
                           <TableCell className="text-sm font-mono">
-                            {txn.cardLastFour ? `••••${txn.cardLastFour}` : "—"}
+                            {txn.counterpartyRef || "—"}
                           </TableCell>
-                          <TableCell className="text-right text-sm font-mono font-semibold">
-                            {formatCurrency(Math.abs(txn.billedAmount ?? txn.originalAmount ?? 0), txn.billedCurrency)}
+
+                          {/* Billed amount */}
+                          <TableCell className="text-right text-sm font-mono font-semibold whitespace-nowrap">
+                            {txn.billedAmount !== null &&
+                              txn.billedAmount !== undefined
+                              ? formatCurrency(
+                                Math.abs(txn.billedAmount),
+                                txn.billedCurrency
+                              )
+                              : "—"}
                           </TableCell>
-                          <TableCell className="text-sm font-mono">{txn.billedCurrency}</TableCell>
+
+                          {/* Billed currency */}
+                          <TableCell className="text-sm font-mono">
+                            {txn.billedCurrency || "—"}
+                          </TableCell>
+
+                          {/* Original amount */}
+                          <TableCell className="text-right text-sm font-mono whitespace-nowrap">
+                            {txn.originalAmount !== null &&
+                              txn.originalAmount !== undefined
+                              ? txn.originalAmount.toFixed(2)
+                              : "—"}
+                          </TableCell>
+
+                          {/* Original currency */}
+                          <TableCell className="text-sm font-mono">
+                            {txn.originalCurrency || "—"}
+                          </TableCell>
+
+                          {/* FX rate */}
+                          <TableCell className="text-right text-sm font-mono">
+                            {txn.statementFxRate !== null &&
+                              txn.statementFxRate !== undefined
+                              ? Number(txn.statementFxRate).toFixed(6)
+                              : "—"}
+                          </TableCell>
+
+                          {/* Status */}
                           <TableCell>
                             <Badge
-                              variant={txn.status === "matched" ? "success" : txn.status === "ignored" ? "secondary" : "outline"}
+                              variant={
+                                txn.status === "matched"
+                                  ? "success"
+                                  : txn.status === "ignored"
+                                    ? "secondary"
+                                    : "outline"
+                              }
                               className="text-xs"
                             >
                               {txn.status}
                             </Badge>
                           </TableCell>
+
+                          {/* Coverage state */}
+                          <TableCell>
+                            <Badge
+                              variant={
+                                txn.coverageState === "matched"
+                                  ? "success"
+                                  : "outline"
+                              }
+                              className="text-xs"
+                            >
+                              {txn.coverageState || "unmatched"}
+                            </Badge>
+                          </TableCell>
+
+                          {/* Ignore reason */}
+                          <TableCell className="text-sm max-w-[180px] truncate">
+                            {txn.ignoreReason || "—"}
+                          </TableCell>
+
                         </TableRow>
                       ))}
+
                       {filtered.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                          <TableCell
+                            colSpan={13}
+                            className="h-32 text-center text-muted-foreground"
+                          >
                             No transactions found.
                           </TableCell>
                         </TableRow>
                       )}
                     </TableBody>
+
                   </Table>
                 </CardContent>
               </Card>
@@ -544,8 +680,8 @@ export default function TransactionsPage() {
               <div
                 {...getPDFRootProps()}
                 className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${isPDFDragActive
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-primary/50 hover:bg-muted/50"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-muted/50"
                   }`}
               >
                 <input {...getPDFInputProps()} />
@@ -638,10 +774,17 @@ export default function TransactionsPage() {
                           <TableHeader>
                             <TableRow className="bg-muted/50">
                               <TableHead className="text-xs">Date</TableHead>
+                              <TableHead className="text-xs">Posting Date</TableHead>
                               <TableHead className="text-xs">Description</TableHead>
-                              <TableHead className="text-xs text-right">Amount</TableHead>
+                              <TableHead className="text-xs">Counterparty Ref</TableHead>
+                              <TableHead className="text-xs text-right">Original Amount</TableHead>
+                              <TableHead className="text-xs">Original Currency</TableHead>
+                              <TableHead className="text-xs text-right">FX Rate</TableHead>
+                              <TableHead className="text-xs text-right">Billed Amount</TableHead>
                               <TableHead className="text-xs">Currency</TableHead>
-                              <TableHead className="text-xs">Card</TableHead>
+                              <TableHead className="text-xs text-right">Balance</TableHead>
+                              <TableHead className="text-xs">Status</TableHead>
+                              <TableHead className="text-xs">Coverage</TableHead>
                               <TableHead className="w-20" />
                             </TableRow>
                           </TableHeader>
@@ -655,16 +798,105 @@ export default function TransactionsPage() {
                             )}
                             {pdfRows.map((row) => (
                               <TableRow key={row.id}>
-                                <TableCell className="text-xs whitespace-nowrap">{row.transactionDate || "—"}</TableCell>
-                                <TableCell className="text-xs max-w-[180px] truncate">{row.description || "—"}</TableCell>
-                                <TableCell className="text-xs text-right font-mono">{row.billedAmount?.toFixed(2) ?? "—"}</TableCell>
-                                <TableCell className="text-xs font-mono">{row.billedCurrency ?? "ILS"}</TableCell>
-                                <TableCell className="text-xs font-mono">{row.cardLastFour ? `••••${row.cardLastFour}` : "—"}</TableCell>
-                                <TableCell className="p-1">
+
+                                {/* Transaction date */}
+                                <TableCell className="text-xs whitespace-nowrap">
+                                  {row.transactionDate || "—"}
+                                </TableCell>
+
+                                {/* Posting date */}
+                                <TableCell className="text-xs whitespace-nowrap">
+                                  {row.postingDate || "—"}
+                                </TableCell>
+
+                                {/* Description */}
+                                <TableCell className="text-xs min-w-[220px] max-w-[300px]">
+                                  <div className="truncate" title={row.description || ""}>
+                                    {row.description || "—"}
+                                  </div>
+                                </TableCell>
+
+                                {/* Counterparty reference */}
+                                <TableCell className="text-xs max-w-[160px]">
+                                  <div className="truncate" title={row.counterpartyRef || ""}>
+                                    {row.counterpartyRef || "—"}
+                                  </div>
+                                </TableCell>
+
+                                {/* Original amount */}
+                                <TableCell className="text-xs text-right font-mono whitespace-nowrap">
+                                  {row.originalAmount != null
+                                    ? Number(row.originalAmount).toFixed(2)
+                                    : "—"}
+                                </TableCell>
+
+                                {/* Original currency */}
+                                <TableCell className="text-xs font-mono">
+                                  {row.originalCurrency || "—"}
+                                </TableCell>
+
+                                {/* FX rate */}
+                                <TableCell className="text-xs text-right font-mono">
+                                  {row.statementFxRate != null
+                                    ? Number(row.statementFxRate).toFixed(6)
+                                    : "—"}
+                                </TableCell>
+
+                                {/* Billed amount */}
+                                <TableCell className="text-xs text-right font-mono font-semibold whitespace-nowrap">
+                                  {row.billedAmount != null
+                                    ? Number(row.billedAmount).toFixed(2)
+                                    : "—"}
+                                </TableCell>
+
+                                {/* Billed currency */}
+                                <TableCell className="text-xs font-mono">
+                                  {row.billedCurrency || "—"}
+                                </TableCell>
+
+                                {/* Balance */}
+                                <TableCell className="text-xs text-right font-mono whitespace-nowrap">
+                                  {row.balance != null
+                                    ? Number(row.balance).toFixed(2)
+                                    : "—"}
+                                </TableCell>
+
+                                {/* Status */}
+                                <TableCell>
+                                  <Badge
+                                    variant={
+                                      row.status === "matched"
+                                        ? "success"
+                                        : row.status === "ignored"
+                                          ? "secondary"
+                                          : "outline"
+                                    }
+                                    className="text-xs"
+                                  >
+                                    {row.status || "unmatched"}
+                                  </Badge>
+                                </TableCell>
+
+                                {/* Coverage */}
+                                <TableCell>
+                                  <Badge variant="outline" className="text-xs">
+                                    {row.coverageState || "unmatched"}
+                                  </Badge>
+                                </TableCell>
+
+                                {/* Actions */}
+                                <TableCell className="p-1 sticky right-0 bg-background">
                                   <div className="flex gap-1">
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingRow(row)}>
+
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-7 w-7"
+                                      onClick={() => setEditingRow(row)}
+                                    >
                                       <Edit2 className="h-3 w-3" />
                                     </Button>
+
                                     <Button
                                       size="icon"
                                       variant="ghost"
@@ -673,8 +905,10 @@ export default function TransactionsPage() {
                                     >
                                       <X className="h-3 w-3" />
                                     </Button>
+
                                   </div>
                                 </TableCell>
+
                               </TableRow>
                             ))}
                           </TableBody>
@@ -746,8 +980,8 @@ export default function TransactionsPage() {
             <div
               {...getCSVRootProps()}
               className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-all ${isCSVDragActive
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50 hover:bg-muted/50"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-primary/50 hover:bg-muted/50"
                 }`}
             >
               <input {...getCSVInputProps()} />

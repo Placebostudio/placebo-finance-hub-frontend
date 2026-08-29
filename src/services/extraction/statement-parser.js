@@ -30,16 +30,140 @@ const AMOUNT_RE = [
 
 // ── Currency detectors ────────────────────────────────────────────────────────
 const CURRENCY_SYMBOLS = { '₪': 'ILS', '$': 'USD', '€': 'EUR', '£': 'GBP', '¥': 'JPY' };
-const CURRENCY_CODES = ['ILS', 'USD', 'EUR', 'GBP', 'CHF', 'JPY', 'NIS'];
+const CURRENCY_CODES = ['ILS', 'USD', 'EUR', 'GBP', 'CHF', 'JPY', 'NIS', 'SEK'];
+const STATEMENT_FORMATS = {
 
-function detectCurrency(text) {
+  english: {
+    columns: [
+      "date",
+      "to name/bank",
+      "to account",
+      "message/ocr",
+      "own notes",
+      "amount",
+      "balance"
+    ],
+
+    numberFormat: "english",
+
+    dateFormat: "iso",
+
+    datePosition: "end"
+  },
+
+  swedish: {
+    columns: [
+      // Swedish headers
+    ],
+
+    numberFormat: "swedish",
+
+    dateFormat: "iso",
+
+    datePosition: "end"
+  }
+};
+
+function detectCurrency(fullText) {
+
   for (const [sym, code] of Object.entries(CURRENCY_SYMBOLS)) {
-    if (text.includes(sym)) return code;
+
+    if (fullText.includes(sym)) {
+      return code;
+    }
   }
+
   for (const code of CURRENCY_CODES) {
-    if (new RegExp(`\\b${code}\\b`, 'i').test(text)) return code;
+
+    if (
+      new RegExp(`\\b${code}\\b`, "i")
+        .test(fullText)
+    ) {
+      return code;
+    }
   }
-  return 'ILS';
+
+  return null;
+}
+
+function detectStatementFormat(fullText) {
+
+  const text =
+    String(fullText ?? "");
+
+  const normalized =
+    text
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+  // ============================================================
+  // ENGLISH BANK STATEMENT
+  //
+  // Example header:
+  //
+  // Date To name/bank To account Message/OCR Own notes Amount Balance
+  // ============================================================
+
+  const englishIndicators = [
+    "date",
+    "to name/bank",
+    "to account",
+    "message/ocr",
+    "own notes",
+    "amount",
+    "balance"
+  ];
+
+  const englishMatches =
+    englishIndicators.filter(
+      (indicator) =>
+        normalized.includes(indicator)
+    ).length;
+
+  if (englishMatches >= 4) {
+
+    return {
+      type: "english",
+      defaultCurrency: detectCurrency(text) || null
+    };
+  }
+
+  // ============================================================
+  // SWEDISH
+  // ============================================================
+
+  const swedishIndicators = [
+    "datum",
+    "belopp",
+    "saldo",
+    "meddelande",
+    "bokföringsdag"
+  ];
+
+  const swedishMatches =
+    swedishIndicators.filter(
+      (indicator) =>
+        normalized.includes(indicator)
+    ).length;
+
+  if (swedishMatches >= 2) {
+
+    return {
+      type: "swedish",
+      defaultCurrency: detectCurrency(text) || "SEK"
+    };
+  }
+
+  // ============================================================
+  // UNKNOWN
+  // ============================================================
+
+  return {
+    type: "unknown",
+    defaultCurrency:
+      detectCurrency(text) || null
+  };
 }
 
 const COUNTRY_DEFAULT_CURRENCIES = {
@@ -240,53 +364,205 @@ function reconstructLines(items) {
 }
 
 // ── Transaction line parsing ──────────────────────────────────────────────────
-function parseTransactionLine(line, defaultCurrency) {
-  if (isNoiseLine(line) || line.trim().length < 8) return null;
+function parseTransactionLine(line, defaultCurrency, statementFormat) {
 
-  const dates = extractDates(line);
-  if (dates.length === 0) return null;
-
-  const amounts = extractAmounts(line);
-  if (amounts.length === 0) return null;
-
-  const transactionDate = dates[0];
-  const postingDate = dates.length > 1 ? dates[1] : transactionDate;
-
-  // Billed amount = last amount on line (rightmost column in a table)
-  const billedEntry = amounts[amounts.length - 1];
-  const originalEntry = amounts.length > 1 ? amounts[0] : billedEntry;
-
-  const currency = detectCurrency(line) || defaultCurrency;
-
-  // Description: strip out dates and amounts, clean up
-  let desc = line;
-  for (const dateStr of dates) {
-    // Remove the raw date string
-    desc = desc.replace(new RegExp(dateStr.replace(/\//g, '[/\\-\\.]'), 'g'), '');
+  if (!line || typeof line !== "string") {
+    return null;
   }
-  for (const { raw } of amounts) {
-    desc = desc.replace(raw, '');
-  }
-  // Remove currency markers
-  desc = desc.replace(/[₪$€£¥]/g, '');
-  desc = desc.replace(new RegExp(`\\b(${CURRENCY_CODES.join('|')})\\b`, 'gi'), '');
-  desc = desc.replace(/\s+/g, ' ').trim().replace(/^[,.\-|;:]+|[,.\-|;:]+$/g, '').trim();
-  if (!desc || desc.length < 2) desc = 'Transaction';
 
-  return {
-    id: generateId(),
-    transactionDate,
-    postingDate,
-    description: desc,
-    normalizedDescription: desc.toLowerCase().trim(),
-    originalAmount: Math.abs(originalEntry.value),
-    originalCurrency: currency,
-    billedAmount: Math.abs(billedEntry.value),
-    billedCurrency: currency,
-    cardLastFour: '',
-    status: 'unmatched',
-    _raw: line,
-  };
+  const raw = line.trim();
+
+  // console.log(raw)
+
+  // ============================================================
+  // ENGLISH BANK EXPORT
+  //
+  // Header:
+  //
+  // Date To name/bank To account Message/OCR Own notes Amount Balance
+  //
+  // Example:
+  //
+  // 2026-06-03 HANGZHOU ACCTRIM number PLACEBO DESIGN LAB
+  // -4 979,67 40 354,77
+  //
+  // ============================================================
+
+  if (statementFormat?.type === "english") {
+
+    // ==========================================================
+    // DATE
+    // ==========================================================
+
+    const dateMatch =
+      raw.match(/^(\d{4}-\d{2}-\d{2})\s+/);
+
+    if (!dateMatch) {
+      return null;
+    }
+
+    const transactionDate = dateMatch[1];
+
+    const remainder =
+      raw.slice(dateMatch[0].length).trim();
+
+    if (!remainder) {
+      return null;
+    }
+
+    // ==========================================================
+    // AMOUNT + BALANCE
+    //
+    // Examples:
+    //
+    // -500,00 119 261,34
+    // -700,00 39 920,77
+    // -4 979,67 40 354,77
+    // -1 000,00 34 323,77
+    //
+    // Spaces are thousands separators.
+    // ==========================================================
+
+    const endingNumbers =
+      /(-?\d+(?:\s+\d{3})*,\d{2})\s+(-?\d+(?:\s+\d{3})*,\d{2})\s*$/;
+
+    const numberMatch =
+      remainder.match(endingNumbers);
+
+    if (!numberMatch) {
+
+      // console.log(
+      //   ">>> FAILED AMOUNT/BALANCE:",
+      //   JSON.stringify(remainder)
+      // );
+
+      return null;
+    }
+
+    // ==========================================================
+    // AMOUNT
+    // ==========================================================
+
+    const amountRaw =
+      numberMatch[1];
+
+    // ==========================================================
+    // BALANCE
+    // ==========================================================
+
+    const balanceRaw =
+      numberMatch[2];
+
+    // ==========================================================
+    // DESCRIPTION
+    //
+    // Everything before the amount.
+    // ==========================================================
+
+    const description =
+      remainder
+        .slice(0, numberMatch.index)
+        .trim()
+        // Remove numeric references/IDs from the END of the description
+        .replace(/\s+\d[\d\s.,-]*$/, "")
+        .trim();
+
+    if (!description) {
+      return null;
+    }
+
+    // ==========================================================
+    // NUMBER PARSER
+    // ==========================================================
+
+    const parseSwedishNumber = (value) => {
+
+      if (!value) {
+        return null;
+      }
+
+      const normalized =
+        value
+          .replace(/\s+/g, "")
+          .replace(",", ".");
+
+      const result =
+        Number(normalized);
+
+      return Number.isFinite(result)
+        ? result
+        : null;
+    };
+
+    const billedAmount =
+      parseSwedishNumber(amountRaw);
+
+    const balance =
+      parseSwedishNumber(balanceRaw);
+
+    if (billedAmount === null) {
+      return null;
+    }
+
+    if (balance === null) {
+      return null;
+    }
+
+    // ==========================================================
+    // TRANSACTION OBJECT
+    // ==========================================================
+
+    const normalizedDescription =
+      description
+        .toLowerCase()
+        .replace(/\d+(?:[.,]\d+)?/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const transaction = {
+      id: crypto.randomUUID(),
+
+      transactionDate,
+
+      postingDate: null,
+
+      description,
+
+      normalizedDescription,
+
+      counterpartyRef: null,
+
+      originalAmount: null,
+
+      originalCurrency: null,
+
+      statementFxRate: null,
+
+      billedAmount,
+
+      billedCurrency:
+        defaultCurrency,
+
+      status: "unmatched",
+
+      coverageState: "unmatched",
+
+      ignoreReason: null,
+
+      rowHash:
+        `${transactionDate}|${description}|${billedAmount}|${balance}`,
+
+      balance
+    };
+
+    return transaction;
+  }
+
+  // ============================================================
+  // OTHER FORMATS
+  // ============================================================
+
+  return null;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -299,62 +575,236 @@ function parseTransactionLine(line, defaultCurrency) {
  * @returns {{ transactions, confidence, extractedText, issues }}
  */
 export function parseStatement(fullText, pages = [], country = null) {
-  const defaultCurrency =
-  COUNTRY_DEFAULT_CURRENCIES[country] || 'ILS';
 
-  // Build line list, preferring item-reconstructed lines for better table support
+  // ============================================================
+  // DETECT STATEMENT FORMAT
+  // ============================================================
+
+  const statementFormat = detectStatementFormat(fullText);
+
+  // console.log(
+  //   "STATEMENT FORMAT:",
+  //   statementFormat.type
+  // );
+
+  // ============================================================
+  // DETECT CURRENCY
+  // ============================================================
+
+  const detectedCurrency = detectCurrency(fullText);
+
+  const defaultCurrency =
+    detectedCurrency ||
+    statementFormat.defaultCurrency ||
+    null;
+
+  // ============================================================
+  // BUILD LINE LIST
+  // ============================================================
+
   let allLines = [];
+
   for (const p of pages) {
+
     if (p.items && p.items.length > 0) {
-      allLines = allLines.concat(reconstructLines(p.items));
-    } else {
-      allLines = allLines.concat(p.text.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean));
+
+      const reconstructed =
+        reconstructLines(p.items);
+
+      allLines = allLines.concat(reconstructed);
+
+    } else if (p.text) {
+
+      allLines = allLines.concat(
+        p.text
+          .split(/[\n\r]+/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+      );
     }
   }
+
+  // ============================================================
+  // FALLBACK TO FULL TEXT
+  // ============================================================
+
   if (allLines.length === 0) {
-    allLines = fullText.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
+
+    allLines =
+      fullText
+        .split(/[\n\r]+/)
+        .map((l) => l.trim())
+        .filter(Boolean);
   }
+
+  // console.log("TOTAL LINES:", allLines.length);
+
+  // Useful for debugging the actual OCR/PDF reconstruction
+  // console.log("STATEMENT LINES:");
+
+  // allLines.forEach((line, index) => {
+  //   console.log(index, JSON.stringify(line));
+  // });
+
+  // ============================================================
+  // TRANSACTION PARSING
+  // ============================================================
 
   const transactions = [];
   const issues = [];
+
   let inTransactionBlock = false;
 
-  for (const line of allLines) {
+  // console.log("========== PDF PARSER DEBUG ==========");
+  // console.log("FORMAT:", statementFormat.type);
+  // console.log("CURRENCY:", defaultCurrency);
+  // console.log("LINES:", allLines.length);
+
+  for (const [index, line] of allLines.entries()) {
+
+    // console.log(`[${index}]`, JSON.stringify(line));
+
+    // ----------------------------------------------------------
+    // Detect transaction table header
+    // ----------------------------------------------------------
+
     if (!inTransactionBlock && isHeaderLine(line)) {
+
       inTransactionBlock = true;
+
+      // console.log(
+      //   ">>> TRANSACTION HEADER FOUND:",
+      //   line
+      // );
+
       continue;
     }
-    const txn = parseTransactionLine(line, defaultCurrency);
-    if (txn) transactions.push(txn);
-  }
 
-  // If no header was found but we still found some transactions, keep them
-  // (some statements don't have clear headers)
+    // ----------------------------------------------------------
+    // Ignore everything before the transaction table
+    // ----------------------------------------------------------
 
-  // Deduplication: remove rows with same date + same amount + very similar description
-  const deduped = [];
-  for (const txn of transactions) {
-    const dup = deduped.some(
-      (t) =>
-        t.transactionDate === txn.transactionDate &&
-        Math.abs(t.billedAmount - txn.billedAmount) < 0.01 &&
-        (t.description.slice(0, 15).toLowerCase() === txn.description.slice(0, 15).toLowerCase())
+    if (!inTransactionBlock) {
+      continue;
+    }
+
+    // ----------------------------------------------------------
+    // Parse transaction
+    // ----------------------------------------------------------
+
+    const txn = parseTransactionLine(
+      line,
+      defaultCurrency,
+      statementFormat
     );
-    if (!dup) deduped.push(txn);
+
+    // console.log(
+    //   ">>> PARSE RESULT:",
+    //   txn
+    // );
+
+    if (txn) {
+      transactions.push(txn);
+    }
   }
+
+  // console.log(
+  //   ">>> RAW TRANSACTIONS:",
+  //   transactions
+  // );
+
+  // ============================================================
+  // DEDUPLICATION
+  // ============================================================
+
+  const deduped = [];
+
+  for (const txn of transactions) {
+
+    const duplicate =
+      deduped.some((existing) => {
+
+        // ------------------------------------------------------
+        // DATE
+        // ------------------------------------------------------
+
+        if (
+          existing.transactionDate !==
+          txn.transactionDate
+        ) {
+          return false;
+        }
+
+        // ------------------------------------------------------
+        // AMOUNT
+        // ------------------------------------------------------
+
+        if (
+          Math.abs(
+            Number(existing.billedAmount) -
+            Number(txn.billedAmount)
+          ) >= 0.01
+        ) {
+          return false;
+        }
+
+        // ------------------------------------------------------
+        // DESCRIPTION
+        // ------------------------------------------------------
+
+        const existingDescription =
+          String(existing.description ?? "")
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 15);
+
+        const transactionDescription =
+          String(txn.description ?? "")
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 15);
+
+        return (
+          existingDescription ===
+          transactionDescription
+        );
+      });
+
+    if (!duplicate) {
+      deduped.push(txn);
+    }
+  }
+
+  // ============================================================
+  // RESULT
+  // ============================================================
 
   if (deduped.length === 0) {
+
     issues.push(
-      'No transaction rows could be detected automatically. ' +
-      'The statement layout may not be supported by the generic parser. ' +
-      'You can add transactions manually in the table below.'
+      "No transaction rows could be detected automatically. " +
+      "The statement layout may not be supported by the " +
+      "current parser."
     );
   }
+
+  // console.log(
+  //   "FINAL TRANSACTIONS:",
+  //   deduped
+  // );
 
   return {
     transactions: deduped,
-    confidence: deduped.length > 0 ? 'partial' : 'none',
+
+    confidence:
+      deduped.length > 0
+        ? "partial"
+        : "none",
+
     extractedText: fullText,
+
     issues,
   };
 }

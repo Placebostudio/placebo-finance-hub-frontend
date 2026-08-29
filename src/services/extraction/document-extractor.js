@@ -173,7 +173,7 @@ export async function extractReceipt(file, onProgress = () => { }) {
       console.log('[extractReceipt] OCR complete — total text length:', fullText.length);
     }
   }
-
+  
   onProgress({ stage: 'parsing', detail: 'Parsing fields', percent: 90 });
   console.log('[extractReceipt] Parsing text into fields...');
 
