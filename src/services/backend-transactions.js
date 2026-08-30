@@ -248,33 +248,36 @@ export const transactionRepository = {
             result.transactions?.length
         ) {
 
-            await auditRepository.create({
+            for (const transaction of result.transactions) {
 
-                actor_id:
-                    currentUser.id,
+                await auditRepository.create({
 
-                action:
-                    "create",
+                    actor_id:
+                        currentUser.id,
 
-                entity_type:
-                    "transaction",
+                    action:
+                        "create",
 
-                entity_id:
-                    null,
+                    entity_type:
+                        "transaction",
 
-                before:
-                    null,
+                    entity_id:
+                        transaction.id,
 
-                after: {
-                    transactions: result.transactions
-                },
+                    before:
+                        null,
 
-                ip_address:
-                    null,
+                    after: {
+                        transaction
+                    },
 
-                user_agent:
-                    navigator.userAgent
-            });
+                    ip_address:
+                        null,
+
+                    user_agent:
+                        navigator.userAgent
+                });
+            }
         }
 
         return result.transactions;

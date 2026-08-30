@@ -160,8 +160,8 @@ export default function TransactionsPage() {
         statementsData,
         transactionsData
       ] = await Promise.all([
-        statementRepository.getAll(),
-        transactionRepository.getAll()
+        statementRepository.getAll({ spam: false }),
+        transactionRepository.getAll({ spam: false })
       ]);
 
       setStatements(statementsData);
@@ -338,18 +338,15 @@ export default function TransactionsPage() {
         return;
       }
 
-
       await statementRepository.softDelete(
         id,
         currentUser?.id,
         currentUser?.fullName
       );
 
-
       toast.success(
         "Statement deleted"
       );
-
 
       if (
         selectedStatement === id
@@ -360,7 +357,6 @@ export default function TransactionsPage() {
         );
 
       }
-
 
       await load();
 
