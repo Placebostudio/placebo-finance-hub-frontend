@@ -88,70 +88,43 @@ function detectCurrency(fullText) {
 
 function detectStatementFormat(fullText) {
 
-  const text =
-    String(fullText ?? "");
+  const text = String(fullText ?? "");
 
-  const normalized =
-    text
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .trim();
+  const normalized = text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 
   // ============================================================
-  // ENGLISH BANK STATEMENT
-  //
-  // Example header:
+  // TYPE A — ENGLISH BANK STATEMENT
   //
   // Date To name/bank To account Message/OCR Own notes Amount Balance
   // ============================================================
 
-  const englishIndicators = [
-    "date",
-    "to name/bank",
-    "to account",
-    "message/ocr",
-    "own notes",
-    "amount",
-    "balance"
-  ];
+  const englishHeader =
+    "date to name/bank to account message/ocr own notes amount balance";
 
-  const englishMatches =
-    englishIndicators.filter(
-      (indicator) =>
-        normalized.includes(indicator)
-    ).length;
-
-  if (englishMatches >= 4) {
+  if (normalized.includes(englishHeader)) {
 
     return {
-      type: "english",
-      defaultCurrency: detectCurrency(text) || null
+      type: "english"
     };
   }
 
   // ============================================================
-  // SWEDISH
+  // TYPE B — SWEDISH TRANSACTION EXPORT
+  //
+  // Datum Följesedel Reseinformation/inköpsställe
+  // Valuta Utl.belopp/Moms Belopp
   // ============================================================
 
-  const swedishIndicators = [
-    "datum",
-    "belopp",
-    "saldo",
-    "meddelande",
-    "bokföringsdag"
-  ];
+  const swedishHeader =
+    "datum följesedel reseinformation/inköpsställe valuta utl.belopp/moms belopp";
 
-  const swedishMatches =
-    swedishIndicators.filter(
-      (indicator) =>
-        normalized.includes(indicator)
-    ).length;
-
-  if (swedishMatches >= 2) {
+  if (normalized.includes(swedishHeader)) {
 
     return {
-      type: "swedish",
-      defaultCurrency: detectCurrency(text) || "SEK"
+      type: "swedish"
     };
   }
 
@@ -160,9 +133,7 @@ function detectStatementFormat(fullText) {
   // ============================================================
 
   return {
-    type: "unknown",
-    defaultCurrency:
-      detectCurrency(text) || null
+    type: "unknown"
   };
 }
 
@@ -372,20 +343,8 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
 
   const raw = line.trim();
 
-  // console.log(raw)
-
   // ============================================================
   // ENGLISH BANK EXPORT
-  //
-  // Header:
-  //
-  // Date To name/bank To account Message/OCR Own notes Amount Balance
-  //
-  // Example:
-  //
-  // 2026-06-03 HANGZHOU ACCTRIM number PLACEBO DESIGN LAB
-  // -4 979,67 40 354,77
-  //
   // ============================================================
 
   if (statementFormat?.type === "english") {
@@ -412,15 +371,6 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
 
     // ==========================================================
     // AMOUNT + BALANCE
-    //
-    // Examples:
-    //
-    // -500,00 119 261,34
-    // -700,00 39 920,77
-    // -4 979,67 40 354,77
-    // -1 000,00 34 323,77
-    //
-    // Spaces are thousands separators.
     // ==========================================================
 
     const endingNumbers =
@@ -430,40 +380,23 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
       remainder.match(endingNumbers);
 
     if (!numberMatch) {
-
-      // console.log(
-      //   ">>> FAILED AMOUNT/BALANCE:",
-      //   JSON.stringify(remainder)
-      // );
-
       return null;
     }
 
-    // ==========================================================
-    // AMOUNT
-    // ==========================================================
-
     const amountRaw =
       numberMatch[1];
-
-    // ==========================================================
-    // BALANCE
-    // ==========================================================
 
     const balanceRaw =
       numberMatch[2];
 
     // ==========================================================
     // DESCRIPTION
-    //
-    // Everything before the amount.
     // ==========================================================
 
     const description =
       remainder
         .slice(0, numberMatch.index)
         .trim()
-        // Remove numeric references/IDs from the END of the description
         .replace(/\s+\d[\d\s.,-]*$/, "")
         .trim();
 
@@ -475,7 +408,7 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
     // NUMBER PARSER
     // ==========================================================
 
-    const parseSwedishNumber = (value) => {
+    const parseEnglishStatementNumber = (value) => {
 
       if (!value) {
         return null;
@@ -495,21 +428,25 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
     };
 
     const billedAmount =
-      parseSwedishNumber(amountRaw);
-
-    const balance =
-      parseSwedishNumber(balanceRaw);
+      parseEnglishStatementNumber(amountRaw);
 
     if (billedAmount === null) {
       return null;
     }
+
+    // ==========================================================
+    // BALANCE
+    // ==========================================================
+
+    const balance =
+      parseEnglishStatementNumber(balanceRaw);
 
     if (balance === null) {
       return null;
     }
 
     // ==========================================================
-    // TRANSACTION OBJECT
+    // NORMALIZED DESCRIPTION
     // ==========================================================
 
     const normalizedDescription =
@@ -519,7 +456,11 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
         .replace(/\s+/g, " ")
         .trim();
 
-    const transaction = {
+    // ==========================================================
+    // TRANSACTION
+    // ==========================================================
+
+    return {
       id: crypto.randomUUID(),
 
       transactionDate,
@@ -541,7 +482,7 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
       billedAmount,
 
       billedCurrency:
-        defaultCurrency,
+        defaultCurrency || "SEK",
 
       status: "unmatched",
 
@@ -554,12 +495,330 @@ function parseTransactionLine(line, defaultCurrency, statementFormat) {
 
       balance
     };
+  }
+
+
+  // ============================================================
+  // SWEDISH BANK EXPORT
+  //
+  // Example:
+  //
+  // 260510 Zara com Arteixo 2.117,00
+  //
+  // Foreign example:
+  //
+  // 260510 Zara com Arteixo USD 25 237,78
+  //
+  // First amount = foreign amount
+  // Second amount = final SEK amount
+  //
+  // If only one amount exists:
+  //
+  // 260510 Zara com Arteixo 2.117,00
+  //
+  // That amount is the SEK billed amount.
+  // ============================================================
+
+  if (statementFormat?.type === "swedish") {
+
+    // ==========================================================
+    // DATE
+    // ==========================================================
+
+    const dateMatch =
+      raw.match(/^(\d{6})\s+/);
+
+    if (!dateMatch) {
+      return null;
+    }
+
+    const dateRaw =
+      dateMatch[1];
+
+    const transactionDate =
+      `20${dateRaw.slice(0, 2)}-${dateRaw.slice(2, 4)}-${dateRaw.slice(4, 6)}`;
+
+    // ==========================================================
+    // REMAINDER
+    // ==========================================================
+
+    const remainder =
+      raw.slice(dateMatch[0].length).trim();
+
+    if (!remainder) {
+      return null;
+    }
+
+    // ==========================================================
+    // NUMBER PARSER
+    //
+    // Swedish format:
+    //
+    // 2.117,00
+    // 10.000,50
+    // 123,45
+    //
+    // "." = thousands
+    // "," = decimals
+    // ==========================================================
+
+    const parseSwedishNumber = (value) => {
+
+      if (!value) {
+        return null;
+      }
+
+      const normalized =
+        value
+          .replace(/\./g, "")
+          .replace(",", ".");
+
+      const result =
+        Number(normalized);
+
+      return Number.isFinite(result)
+        ? result
+        : null;
+    };
+
+    // ==========================================================
+    // FIND ALL AMOUNTS AT THE END OF THE ROW
+    //
+    // This supports:
+    //
+    // 2.117,00
+    //
+    // USD 25 237,78
+    //
+    // EUR 100 1.234,56
+    //
+    // The final amount is always the SEK amount.
+    // ==========================================================
+
+    const amountPattern =
+      /(-?\d+(?:\.\d{3})*,\d{2})/g;
+
+    const amounts = [];
+
+    let amountMatch;
+
+    while (
+      (amountMatch = amountPattern.exec(remainder)) !== null
+    ) {
+
+      amounts.push({
+        raw: amountMatch[1],
+        index: amountMatch.index,
+        end:
+          amountMatch.index +
+          amountMatch[0].length
+      });
+    }
+
+    if (amounts.length === 0) {
+      return null;
+    }
+
+    // ==========================================================
+    // FINAL AMOUNT
+    //
+    // The last amount in the row is the SEK amount.
+    // ==========================================================
+
+    const finalAmount =
+      amounts[amounts.length - 1];
+
+    const billedAmount =
+      parseSwedishNumber(finalAmount.raw);
+
+    if (billedAmount === null) {
+      return null;
+    }
+
+    // ==========================================================
+    // FOREIGN AMOUNT
+    //
+    // If there are two amounts:
+    //
+    // USD 25 237,78
+    //
+    // first = 25 USD
+    // second = 237,78 SEK
+    //
+    // If there is only one amount:
+    //
+    // 2.117,00
+    //
+    // no foreign amount.
+    // ==========================================================
+
+    let originalAmount = null;
+    let originalCurrency = null;
+
+    if (amounts.length >= 2) {
+
+      const foreignAmount =
+        amounts[amounts.length - 2];
+
+      originalAmount =
+        parseSwedishNumber(
+          foreignAmount.raw
+        );
+
+      // ========================================================
+      // FIND CURRENCY BETWEEN DESCRIPTION AND FOREIGN AMOUNT
+      // ========================================================
+
+      const beforeForeignAmount =
+        remainder
+          .slice(
+            0,
+            foreignAmount.index
+          )
+          .trim();
+
+      const currencyMatch =
+        beforeForeignAmount.match(
+          /\b(USD|EUR|GBP|NOK|DKK|CHF|PLN|SEK)\b/i
+        );
+
+      if (currencyMatch) {
+
+        originalCurrency =
+          currencyMatch[1].toUpperCase();
+      }
+
+      // If the detected currency is SEK,
+      // it isn't really a foreign amount.
+      if (originalCurrency === "SEK") {
+
+        originalAmount = null;
+        originalCurrency = null;
+      }
+    }
+
+    // ==========================================================
+    // DESCRIPTION
+    //
+    // Everything before the first relevant amount.
+    // ==========================================================
+
+    const descriptionEnd =
+      amounts.length >= 2
+        ? amounts[amounts.length - 2].index
+        : finalAmount.index;
+
+    let description =
+      remainder
+        .slice(0, descriptionEnd)
+        .trim();
+
+    // ==========================================================
+    // REMOVE FOREIGN CURRENCY FROM DESCRIPTION
+    //
+    // Example:
+    //
+    // Zara com Arteixo USD 25
+    //
+    // becomes:
+    //
+    // Zara com Arteixo
+    // ==========================================================
+
+    if (originalCurrency) {
+
+      description =
+        description
+          .replace(
+            new RegExp(
+              `\\b${originalCurrency}\\b`,
+              "i"
+            ),
+            ""
+          )
+          .trim();
+
+      // Remove the foreign numeric amount
+      description =
+        description
+          .replace(
+            /\s+-?\d+(?:\.\d{3})*,\d{2}\s*$/,
+            ""
+          )
+          .trim();
+    }
+
+    // ==========================================================
+    // REMOVE NUMERIC REFERENCE AT END
+    // ==========================================================
+
+    description =
+      description
+        .replace(
+          /\s+\d[\d\s.,-]*$/,
+          ""
+        )
+        .trim();
+
+    if (!description) {
+      return null;
+    }
+
+    // ==========================================================
+    // NORMALIZED DESCRIPTION
+    // ==========================================================
+
+    const normalizedDescription =
+      description
+        .toLowerCase()
+        .replace(/\d+(?:[.,]\d+)?/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    // ==========================================================
+    // TRANSACTION
+    // ==========================================================
+
+    const transaction = {
+
+      id: crypto.randomUUID(),
+
+      transactionDate,
+
+      postingDate: null,
+
+      description,
+
+      normalizedDescription,
+
+      counterpartyRef: null,
+
+      originalAmount,
+
+      originalCurrency,
+
+      statementFxRate: null,
+
+      billedAmount,
+
+      billedCurrency: "SEK",
+
+      status: "unmatched",
+
+      coverageState: "unmatched",
+
+      ignoreReason: null,
+
+      rowHash:
+        `${transactionDate}|${description}|${billedAmount}|${originalAmount ?? ""}|${originalCurrency ?? ""}`
+    };
 
     return transaction;
   }
 
+
   // ============================================================
-  // OTHER FORMATS
+  // UNSUPPORTED FORMAT
   // ============================================================
 
   return null;
@@ -594,9 +853,13 @@ export function parseStatement(fullText, pages = [], country = null) {
   const detectedCurrency = detectCurrency(fullText);
 
   const defaultCurrency =
-    detectedCurrency ||
-    statementFormat.defaultCurrency ||
-    null;
+    statementFormat.type === "swedish"
+      ? "SEK"
+      : (
+        detectedCurrency ||
+        statementFormat.defaultCurrency ||
+        null
+      );
 
   // ============================================================
   // BUILD LINE LIST
@@ -668,16 +931,52 @@ export function parseStatement(fullText, pages = [], country = null) {
     // Detect transaction table header
     // ----------------------------------------------------------
 
-    if (!inTransactionBlock && isHeaderLine(line)) {
+    if (!inTransactionBlock) {
 
-      inTransactionBlock = true;
+      // ==========================================================
+      // ENGLISH HEADER
+      // ==========================================================
 
-      // console.log(
-      //   ">>> TRANSACTION HEADER FOUND:",
-      //   line
-      // );
+      if (
+        statementFormat.type === "english" &&
+        isHeaderLine(line)
+      ) {
 
-      continue;
+        inTransactionBlock = true;
+
+        // console.log(
+        //   ">>> ENGLISH TRANSACTION HEADER FOUND:",
+        //   line
+        // );
+
+        continue;
+      }
+
+      // ==========================================================
+      // SWEDISH HEADER
+      //
+      // Datum Följesedel Reseinformation/inköpsställe
+      // Valuta Utl.belopp/Moms Belopp
+      // ==========================================================
+
+      if (
+        statementFormat.type === "swedish" &&
+        line.toLowerCase().includes("datum") &&
+        line.toLowerCase().includes("följesedel") &&
+        line.toLowerCase().includes("reseinformation/inköpsställe") &&
+        line.toLowerCase().includes("valuta") &&
+        line.toLowerCase().includes("belopp")
+      ) {
+
+        inTransactionBlock = true;
+
+        // console.log(
+        //   ">>> SWEDISH TRANSACTION HEADER FOUND:",
+        //   line
+        // );
+
+        continue;
+      }
     }
 
     // ----------------------------------------------------------
@@ -724,52 +1023,12 @@ export function parseStatement(fullText, pages = [], country = null) {
     const duplicate =
       deduped.some((existing) => {
 
-        // ------------------------------------------------------
-        // DATE
-        // ------------------------------------------------------
-
-        if (
-          existing.transactionDate !==
-          txn.transactionDate
-        ) {
-          return false;
-        }
-
-        // ------------------------------------------------------
-        // AMOUNT
-        // ------------------------------------------------------
-
-        if (
-          Math.abs(
-            Number(existing.billedAmount) -
-            Number(txn.billedAmount)
-          ) >= 0.01
-        ) {
-          return false;
-        }
-
-        // ------------------------------------------------------
-        // DESCRIPTION
-        // ------------------------------------------------------
-
-        const existingDescription =
-          String(existing.description ?? "")
-            .toLowerCase()
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 15);
-
-        const transactionDescription =
-          String(txn.description ?? "")
-            .toLowerCase()
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 15);
-
         return (
-          existingDescription ===
-          transactionDescription
+          existing.rowHash &&
+          txn.rowHash &&
+          existing.rowHash === txn.rowHash
         );
+
       });
 
     if (!duplicate) {

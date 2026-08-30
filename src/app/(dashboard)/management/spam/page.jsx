@@ -251,7 +251,6 @@ export default function SpamPage() {
 
   // ── filtering ───────────────────────────────────────────────────────────────
 
-  console.log(items)
   const filtered = items.filter((item) => {
     if (typeFilter !== "all" && item.entity_type !== typeFilter) return false;
     if (search) {

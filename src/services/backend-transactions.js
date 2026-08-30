@@ -146,6 +146,139 @@ export const transactionRepository = {
         return result;
     },
 
+    async createBulk(data, statementId, statementPeriod) {
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        // ========================================================
+        // VALIDATE INPUT
+        // ========================================================
+
+        if (!statementId) {
+            throw new Error("statementId is required");
+        }
+
+        if (!statementPeriod) {
+            throw new Error("statementPeriod is required");
+        }
+
+        if (!Array.isArray(data) || data.length === 0) {
+            throw new Error("transactions must be a non-empty array");
+        }
+
+        // ========================================================
+        // VALIDATE TRANSACTIONS
+        //
+        // These are the fields produced by the statement parser.
+        // ========================================================
+
+        for (let i = 0; i < data.length; i++) {
+
+            const txn = data[i];
+
+            if (
+                !txn ||
+                !txn.transaction_date ||
+                !txn.description ||
+                txn.billed_amount === null ||
+                txn.billed_amount === undefined ||
+                !txn.row_hash
+            ) {
+
+                console.error(
+                    "Invalid transaction:",
+                    i,
+                    txn
+                );
+
+                throw new Error(
+                    `Invalid transaction at index ${i}`
+                );
+            }
+        }
+
+        // ========================================================
+        // SEND TO BACKEND
+        // ========================================================
+
+        const response = await fetch(
+            `${BASE_URL}/bulk`,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    statementId,
+                    statementPeriod,
+                    transactions: data
+                })
+            }
+        );
+
+        const result =
+            await response.json();
+
+        // ========================================================
+        // BACKEND ERROR
+        // ========================================================
+
+        if (!response.ok) {
+
+            console.error(
+                "Bulk transaction creation failed:",
+                result
+            );
+
+            throw new Error(
+                result.error ||
+                "Failed to create transactions"
+            );
+        }
+
+        // ========================================================
+        // ONE AUDIT LOG FOR THE WHOLE IMPORT
+        // ========================================================
+
+        if (
+            currentUser &&
+            result.transactions?.length
+        ) {
+
+            await auditRepository.create({
+
+                actor_id:
+                    currentUser.id,
+
+                action:
+                    "create",
+
+                entity_type:
+                    "transaction",
+
+                entity_id:
+                    null,
+
+                before:
+                    null,
+
+                after: {
+                    transactions: result.transactions
+                },
+
+                ip_address:
+                    null,
+
+                user_agent:
+                    navigator.userAgent
+            });
+        }
+
+        return result.transactions;
+    },
 
     // ============================================================
     // UPDATE TRANSACTION
