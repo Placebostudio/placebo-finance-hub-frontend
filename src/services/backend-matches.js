@@ -1,4 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/matches`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/matches`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
@@ -18,7 +19,10 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
@@ -44,9 +48,15 @@ export const matchRepository = {
             }
         );
 
+
         params.set(
             "user_id",
             userId
+        );
+
+        params.set(
+            "role",
+            role
         );
 
 
@@ -91,16 +101,26 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
         }
 
 
+        const params =
+            new URLSearchParams({
+                user_id: userId,
+                role: role
+            });
+
+
         const response =
             await fetch(
-                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+                `${BASE_URL}/${id}?${params.toString()}`
             );
 
         const data =
@@ -132,16 +152,26 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
         }
 
 
+        const params =
+            new URLSearchParams({
+                user_id: userId,
+                role: role
+            });
+
+
         const response =
             await fetch(
-                `${BASE_URL}/expense/${expenseId}?user_id=${encodeURIComponent(userId)}`
+                `${BASE_URL}/expense/${expenseId}?${params.toString()}`
             );
 
         const data =
@@ -173,16 +203,26 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
         }
 
 
+        const params =
+            new URLSearchParams({
+                user_id: userId,
+                role: role
+            });
+
+
         const response =
             await fetch(
-                `${BASE_URL}/transaction/${transactionId}?user_id=${encodeURIComponent(userId)}`
+                `${BASE_URL}/transaction/${transactionId}?${params.toString()}`
             );
 
         const data =
@@ -214,7 +254,10 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
@@ -234,7 +277,8 @@ export const matchRepository = {
 
                     body: JSON.stringify({
                         ...data,
-                        user_id: userId
+                        user_id: userId,
+                        role: role
                     })
                 }
             );
@@ -308,7 +352,10 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
@@ -332,7 +379,8 @@ export const matchRepository = {
 
                     body: JSON.stringify({
                         ...data,
-                        user_id: userId
+                        user_id: userId,
+                        role: role
                     })
                 }
             );
@@ -393,9 +441,6 @@ export const matchRepository = {
 
     // ============================================================
     // SOFT DELETE MATCH
-    //
-    // Soft delete is an UPDATE.
-    // Only spam is changed.
     // ============================================================
 
     async softDelete(id) {
@@ -406,7 +451,10 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
@@ -430,7 +478,8 @@ export const matchRepository = {
 
                     body: JSON.stringify({
                         spam: true,
-                        user_id: userId
+                        user_id: userId,
+                        role: role
                     })
                 }
             );
@@ -491,8 +540,6 @@ export const matchRepository = {
 
     // ============================================================
     // DELETE MATCH
-    //
-    // FINAL / PERMANENT DELETE
     // ============================================================
 
     async delete(id) {
@@ -503,7 +550,10 @@ export const matchRepository = {
         const userId =
             currentUser?.id;
 
-        if (!userId) {
+        const role =
+            currentUser?.role;
+
+        if (!userId || !role) {
             throw new Error(
                 "No logged-in user found"
             );
@@ -514,9 +564,16 @@ export const matchRepository = {
             await this.getById(id);
 
 
+        const params =
+            new URLSearchParams({
+                user_id: userId,
+                role: role
+            });
+
+
         const response =
             await fetch(
-                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                `${BASE_URL}/${id}?${params.toString()}`,
                 {
                     method: "DELETE"
                 }

@@ -11,33 +11,58 @@ export const vendorRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id ?? null;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        const params =
+            new URLSearchParams();
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
+
             }
+        );
 
-        });
+        if (userId) {
+            params.set(
+                "user_id",
+                userId
+            );
+        }
 
-        const queryString = params.toString();
+        const queryString =
+            params.toString();
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
 
-        const response = await fetch(url);
+        const response =
+            await fetch(url);
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
         if (!response.ok) {
+
             throw new Error(
-                data.error || "Failed to get vendors"
+                data.error ||
+                "Failed to get vendors"
             );
         }
 
@@ -51,15 +76,41 @@ export const vendorRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id ?? null;
+
+        const params =
+            new URLSearchParams();
+
+        if (userId) {
+            params.set(
+                "user_id",
+                userId
+            );
+        }
+
+        const queryString =
+            params.toString();
+
+        const url =
+            queryString
+                ? `${BASE_URL}/${id}?${queryString}`
+                : `${BASE_URL}/${id}`;
+
+        const response =
+            await fetch(url);
+
+        const data =
+            await response.json();
 
         if (!response.ok) {
+
             throw new Error(
-                data.error || "Failed to get vendor"
+                data.error ||
+                "Failed to get vendor"
             );
         }
 
@@ -79,27 +130,32 @@ export const vendorRepository = {
         const userId =
             currentUser?.id ?? null;
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    ...data,
-                    user_id: userId
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const result = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
+
             throw new Error(
-                result.error || "Failed to create vendor"
+                result.error ||
+                "Failed to create vendor"
             );
         }
 
@@ -115,24 +171,31 @@ export const vendorRepository = {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "vendor",
+                entity_type:
+                    "vendor",
 
-                entity_id: vendor.id,
+                entity_id:
+                    vendor.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: vendor,
+                after:
+                    vendor,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
-
 
         return vendor;
     },
@@ -153,25 +216,29 @@ export const vendorRepository = {
         const userId =
             currentUser?.id ?? null;
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    ...data,
-                    user_id: userId
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const result = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to update vendor"
@@ -190,24 +257,31 @@ export const vendorRepository = {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "update",
+                action:
+                    "update",
 
-                entity_type: "vendor",
+                entity_type:
+                    "vendor",
 
-                entity_id: id,
+                entity_id:
+                    id,
 
-                before: before,
+                before:
+                    before,
 
-                after: updatedVendor,
+                after:
+                    updatedVendor,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
-
 
         return updatedVendor;
     },
@@ -228,22 +302,23 @@ export const vendorRepository = {
         const userId =
             currentUser?.id ?? null;
 
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
-
-                body: JSON.stringify({
-                    spam: true,
-                    user_id: userId
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        spam: true,
+                        user_id: userId
+                    })
+                }
+            );
 
         const updatedVendor =
             await response.json();
@@ -265,24 +340,31 @@ export const vendorRepository = {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "soft_delete",
+                action:
+                    "soft_delete",
 
-                entity_type: "vendor",
+                entity_type:
+                    "vendor",
 
-                entity_id: id,
+                entity_id:
+                    id,
 
-                before: before,
+                before:
+                    before,
 
-                after: updatedVendor,
+                after:
+                    updatedVendor,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
-
 
         return updatedVendor;
     },
@@ -303,25 +385,28 @@ export const vendorRepository = {
         const userId =
             currentUser?.id ?? null;
 
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "DELETE",
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE",
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    body: JSON.stringify({
+                        user_id: userId
+                    })
+                }
+            );
 
-                body: JSON.stringify({
-                    user_id: userId
-                })
-            }
-        );
-
-        const result = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to delete vendor"
@@ -337,24 +422,31 @@ export const vendorRepository = {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "delete",
+                action:
+                    "delete",
 
-                entity_type: "vendor",
+                entity_type:
+                    "vendor",
 
-                entity_id: id,
+                entity_id:
+                    id,
 
-                before: before,
+                before:
+                    before,
 
-                after: null,
+                after:
+                    null,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
-
 
         return result;
     }

@@ -1,9 +1,11 @@
 const BASE_URL =
     `${process.env.NEXT_PUBLIC_API_URL}/api/users`;
 
-const LOGGED_IN_USER_KEY = "logged_in_user";
+const LOGGED_IN_USER_KEY =
+    "logged_in_user";
 
 import { auditRepository } from "./backend-audits.js";
+
 
 export const userRepository = {
 
@@ -14,16 +16,39 @@ export const userRepository = {
 
     async getAll() {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const response =
-            await fetch(BASE_URL);
+            await fetch(
+                `${BASE_URL}?user_id=${encodeURIComponent(userId)}`
+            );
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
+                data.error ||
                 "Failed to get users"
             );
         }
 
-        return await response.json();
+
+        return data;
     },
 
 
@@ -34,22 +59,44 @@ export const userRepository = {
 
     async getById(id) {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const response =
             await fetch(
-                `${BASE_URL}/${id}`
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
             );
+
 
         if (response.status === 404) {
             return null;
         }
 
+
+        const data =
+            await response.json();
+
+
         if (!response.ok) {
+
             throw new Error(
+                data.error ||
                 "Failed to get user"
             );
         }
 
-        return await response.json();
+
+        return data;
     },
 
 
@@ -62,8 +109,10 @@ export const userRepository = {
         const users =
             await this.getAll();
 
+
         return users.filter(
-            (user) => user.is_active
+            (user) =>
+                user.is_active
         );
     },
 
@@ -93,10 +142,13 @@ export const userRepository = {
                 }
             );
 
+
         const data =
             await response.json();
 
+
         if (!response.ok) {
+
             throw new Error(
                 data.error ||
                 "Login failed"
@@ -164,9 +216,11 @@ export const userRepository = {
                 LOGGED_IN_USER_KEY
             );
 
+
         if (!storedUser) {
             return null;
         }
+
 
         try {
 
@@ -181,9 +235,11 @@ export const userRepository = {
                 err
             );
 
+
             localStorage.removeItem(
                 LOGGED_IN_USER_KEY
             );
+
 
             return null;
         }
@@ -253,6 +309,7 @@ export const userRepository = {
 
         const userId =
             currentUser?.id;
+
 
         if (!userId) {
             throw new Error(
@@ -367,6 +424,7 @@ export const userRepository = {
         const userId =
             currentUser?.id;
 
+
         if (!userId) {
             throw new Error(
                 "No logged-in user found"
@@ -381,6 +439,10 @@ export const userRepository = {
         const before =
             await this.getById(id);
 
+
+        // ========================================================
+        // BUILD REQUEST BODY
+        // ========================================================
 
         const body = {
 
@@ -407,13 +469,20 @@ export const userRepository = {
         };
 
 
-        // Only send password when one was provided.
+        // ========================================================
+        // PASSWORD
+        // ========================================================
+
         if (changes.password) {
 
             body.password =
                 changes.password;
         }
 
+
+        // ========================================================
+        // REQUEST
+        // ========================================================
 
         const response =
             await fetch(
@@ -496,6 +565,7 @@ export const userRepository = {
 
         const userId =
             currentUser?.id;
+
 
         if (!userId) {
             throw new Error(
@@ -587,6 +657,7 @@ export const userRepository = {
 
         const userId =
             currentUser?.id;
+
 
         if (!userId) {
             throw new Error(
@@ -682,6 +753,7 @@ export const userRepository = {
 
         const userId =
             currentUser?.id;
+
 
         if (!userId) {
             throw new Error(

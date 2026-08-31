@@ -43,7 +43,7 @@ export const expenseLedgerRepository = {
         // can identify the requester.
 
         params.set(
-            "requester_id",
+            "user_id",
             currentUser.id
         );
 
