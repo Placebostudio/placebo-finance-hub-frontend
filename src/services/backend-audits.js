@@ -1,40 +1,66 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/audit_logs`;
+import { userRepository } from "./backend-users";
+
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/audit_logs`;
 
 export const auditRepository = {
 
     // ============================================================
     // GET ALL AUDIT LOGS
-    // GET /api/audit_logs
+    // GET /api/audit_logs?user_id=...
     // ============================================================
 
     async getAll(filters = {}) {
 
-        const query = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                query.append(key, value);
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const query =
+            new URLSearchParams();
+
+        query.set(
+            "user_id",
+            userId
+        );
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    query.append(
+                        key,
+                        String(value)
+                    );
+                }
             }
-
-        });
+        );
 
         const url =
-            query.toString()
-                ? `${BASE_URL}?${query.toString()}`
-                : BASE_URL;
+            `${BASE_URL}?${query.toString()}`;
 
-        const response = await fetch(url);
+        const response =
+            await fetch(url);
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get audit logs"
+                data.error ||
+                "Failed to get audit logs"
             );
         }
 
@@ -44,20 +70,35 @@ export const auditRepository = {
 
     // ============================================================
     // GET ONE AUDIT LOG
-    // GET /api/audit_logs/:auditlogid
+    // GET /api/audit_logs/:auditlogid?user_id=...
     // ============================================================
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+            );
+
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get audit log"
+                data.error ||
+                "Failed to get audit log"
             );
         }
 
@@ -68,11 +109,21 @@ export const auditRepository = {
     // ============================================================
     // CREATE AUDIT LOG
     // POST /api/audit_logs
-    //
-    // Audit logs CANNOT themselves be audited.
     // ============================================================
 
     async create(data) {
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
         if (
             data?.entity_type === "audit_log" ||
@@ -83,21 +134,36 @@ export const auditRepository = {
             );
         }
 
-        const response = await fetch(BASE_URL, {
-            method: "POST",
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-            body: JSON.stringify(data)
-        });
+                    body: JSON.stringify({
+                        ...data,
 
-        const result = await response.json();
+                        user_id:
+                            userId,
+
+                        actor_id:
+                            userId
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to create audit log"
+                result.error ||
+                "Failed to create audit log"
             );
         }
 
@@ -112,24 +178,48 @@ export const auditRepository = {
 
     async update(id, data) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+
+                        user_id:
+                            userId,
+
+                        actor_id:
+                            userId
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to update audit log"
+                result.error ||
+                "Failed to update audit log"
             );
         }
 
@@ -139,23 +229,38 @@ export const auditRepository = {
 
     // ============================================================
     // DELETE AUDIT LOG
-    // DELETE /api/audit_logs/:auditlogid
+    // DELETE /api/audit_logs/:auditlogid?user_id=...
     // ============================================================
 
     async delete(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const result = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to delete audit log"
+                result.error ||
+                "Failed to delete audit log"
             );
         }
 

@@ -7,40 +7,75 @@ import { userRepository } from "./backend-users.js";
 export const documentRepository = {
 
     // ============================================================
-    // UPLOAD DOCUMENT
-    //
-    // POST /api/documents
-    //
-    // Sends the actual file as multipart/form-data.
-    //
-    // Backend:
-    //   1. Uploads file to Supabase Storage
-    //   2. Creates documents row
-    //   3. Deletes Storage file if DB insert fails
+    // GET LOGGED-IN USER
     // ============================================================
 
-    async upload(file, uploadedBy, notes = "") {
+    getCurrentUser() {
 
-        const formData = new FormData();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        formData.append("file", file);
-        formData.append("uploaded_by", uploadedBy);
-
-        if (notes) {
-            formData.append("notes", notes);
+        if (!currentUser?.id) {
+            throw new Error(
+                "No logged-in user found"
+            );
         }
 
+        return currentUser;
+    },
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
-                body: formData
-            }
+
+    // ============================================================
+    // UPLOAD DOCUMENT
+    // ============================================================
+
+    async upload(file, notes = "") {
+
+        const currentUser =
+            this.getCurrentUser();
+
+
+        const formData =
+            new FormData();
+
+
+        formData.append(
+            "file",
+            file
+        );
+
+        formData.append(
+            "uploaded_by",
+            currentUser.id
+        );
+
+        formData.append(
+            "user_id",
+            currentUser.id
         );
 
 
-        const result = await response.json();
+        if (notes) {
+
+            formData.append(
+                "notes",
+                notes
+            );
+        }
+
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        const result =
+            await response.json();
 
 
         if (!response.ok) {
@@ -57,32 +92,36 @@ export const documentRepository = {
 
 
         // ========================================================
-        // AUDIT DOCUMENT CREATION
+        // AUDIT
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-
-        if (currentUser && document.id) {
+        if (document.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "document",
+                entity_type:
+                    "document",
 
-                entity_id: document.id,
+                entity_id:
+                    document.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: document,
+                after:
+                    document,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -90,14 +129,34 @@ export const documentRepository = {
         return document;
     },
 
+
+    // ============================================================
+    // GET FILE URL
+    // ============================================================
+
     async getFileUrl(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}/file-url`
+        const currentUser =
+            this.getCurrentUser();
+
+
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            currentUser.id
         );
 
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}/file-url?${params.toString()}`
+            );
+
+
+        const result =
+            await response.json();
 
 
         if (!response.ok) {
@@ -119,32 +178,65 @@ export const documentRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            this.getCurrentUser();
+
+
+        const params =
+            new URLSearchParams();
+
 
         if (filters.status) {
-            params.set("status", filters.status);
+
+            params.set(
+                "status",
+                filters.status
+            );
         }
 
-        if (filters.spam !== undefined && filters.spam !== null) {
-            params.set("spam", String(filters.spam));
+
+        if (
+            filters.spam !== undefined &&
+            filters.spam !== null
+        ) {
+
+            params.set(
+                "spam",
+                String(filters.spam)
+            );
         }
+
+
+        params.set(
+            "user_id",
+            currentUser.id
+        );
+
 
         const query =
             params.toString()
                 ? `?${params.toString()}`
                 : "";
 
-        const response = await fetch(
-            `${BASE_URL}${query}`
-        );
 
-        const data = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}${query}`
+            );
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
-                data.error || "Failed to fetch documents"
+                data.error ||
+                "Failed to fetch documents"
             );
         }
+
 
         return data;
     },
@@ -156,9 +248,22 @@ export const documentRepository = {
 
     async getById(id) {
 
+        const currentUser =
+            this.getCurrentUser();
+
+
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            currentUser.id
+        );
+
+
         const response =
             await fetch(
-                `${BASE_URL}/${id}`
+                `${BASE_URL}/${id}?${params.toString()}`
             );
 
 
@@ -181,13 +286,13 @@ export const documentRepository = {
 
     // ============================================================
     // CREATE DOCUMENT
-    //
-    // NOTE:
-    // This is kept for normal JSON document creation elsewhere.
-    // The upload page should use upload() instead.
     // ============================================================
 
     async create(data) {
+
+        const currentUser =
+            this.getCurrentUser();
+
 
         const response =
             await fetch(
@@ -200,7 +305,14 @@ export const documentRepository = {
                             "application/json"
                     },
 
-                    body: JSON.stringify(data)
+                    body:
+                        JSON.stringify({
+
+                            ...data,
+
+                            user_id:
+                                currentUser.id
+                        })
                 }
             );
 
@@ -223,32 +335,36 @@ export const documentRepository = {
 
 
         // ========================================================
-        // AUDIT DOCUMENT CREATION
+        // AUDIT
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-
-        if (currentUser && document.id) {
+        if (document.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "document",
+                entity_type:
+                    "document",
 
-                entity_id: document.id,
+                entity_id:
+                    document.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: document,
+                after:
+                    document,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -262,6 +378,10 @@ export const documentRepository = {
     // ============================================================
 
     async update(id, data) {
+
+        const currentUser =
+            this.getCurrentUser();
+
 
         const before =
             await this.getById(id);
@@ -278,7 +398,14 @@ export const documentRepository = {
                             "application/json"
                     },
 
-                    body: JSON.stringify(data)
+                    body:
+                        JSON.stringify({
+
+                            ...data,
+
+                            user_id:
+                                currentUser.id
+                        })
                 }
             );
 
@@ -301,34 +428,35 @@ export const documentRepository = {
 
 
         // ========================================================
-        // AUDIT DOCUMENT UPDATE
+        // AUDIT
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                currentUser.id,
 
-        if (currentUser) {
+            action:
+                "update",
 
-            await auditRepository.create({
+            entity_type:
+                "document",
 
-                actor_id: currentUser.id,
+            entity_id:
+                id,
 
-                action: "update",
-
-                entity_type: "document",
-
-                entity_id: id,
-
+            before:
                 before,
 
-                after: updatedDocument,
+            after:
+                updatedDocument,
 
-                ip_address: null,
+            ip_address:
+                null,
 
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedDocument;
@@ -340,6 +468,10 @@ export const documentRepository = {
     // ============================================================
 
     async softDelete(id) {
+
+        const currentUser =
+            this.getCurrentUser();
+
 
         const before =
             await this.getById(id);
@@ -356,11 +488,18 @@ export const documentRepository = {
                             "application/json"
                     },
 
-                    body: JSON.stringify({
-                        deleted_at:
-                            new Date().toISOString(),
-                        spam: true
-                    })
+                    body:
+                        JSON.stringify({
+
+                            deleted_at:
+                                new Date().toISOString(),
+
+                            spam:
+                                true,
+
+                            user_id:
+                                currentUser.id
+                        })
                 }
             );
 
@@ -383,34 +522,35 @@ export const documentRepository = {
 
 
         // ========================================================
-        // AUDIT DOCUMENT DELETION
+        // AUDIT
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                currentUser.id,
 
-        if (currentUser) {
+            action:
+                "soft_delete",
 
-            await auditRepository.create({
+            entity_type:
+                "document",
 
-                actor_id: currentUser.id,
+            entity_id:
+                id,
 
-                action: "soft_delete",
-
-                entity_type: "document",
-
-                entity_id: id,
-
+            before:
                 before,
 
-                after: updatedDocument,
+            after:
+                updatedDocument,
 
-                ip_address: null,
+            ip_address:
+                null,
 
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedDocument;
@@ -423,13 +563,26 @@ export const documentRepository = {
 
     async delete(id) {
 
+        const currentUser =
+            this.getCurrentUser();
+
+
         const before =
             await this.getById(id);
 
 
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            currentUser.id
+        );
+
+
         const response =
             await fetch(
-                `${BASE_URL}/${id}`,
+                `${BASE_URL}/${id}?${params.toString()}`,
                 {
                     method: "DELETE"
                 }
@@ -450,34 +603,35 @@ export const documentRepository = {
 
 
         // ========================================================
-        // AUDIT DOCUMENT DELETION
+        // AUDIT
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                currentUser.id,
 
-        if (currentUser) {
+            action:
+                "delete",
 
-            await auditRepository.create({
+            entity_type:
+                "document",
 
-                actor_id: currentUser.id,
+            entity_id:
+                id,
 
-                action: "delete",
-
-                entity_type: "document",
-
-                entity_id: id,
-
+            before:
                 before,
 
-                after: null,
+            after:
+                null,
 
-                ip_address: null,
+            ip_address:
+                null,
 
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;

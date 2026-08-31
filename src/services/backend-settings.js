@@ -1,4 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/app-settings`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/app-settings`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
@@ -12,18 +13,36 @@ export const appSettingsRepository = {
 
     async getSettings() {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const response = await fetch(
-            BASE_URL
+            `${BASE_URL}?user_id=${encodeURIComponent(userId)}`
         );
 
-        const data = await response.json();
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
 
             throw new Error(
-                data.error || "Failed to get app settings"
+                data.error ||
+                "Failed to get app settings"
             );
         }
+
 
         return data;
     },
@@ -35,24 +54,57 @@ export const appSettingsRepository = {
 
     async updateSettings(data) {
 
-        // Get the old settings BEFORE changing them
-        const before = await this.getSettings();
+        // ========================================================
+        // GET LOGGED-IN USER
+        // ========================================================
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "PUT",
+        // ========================================================
+        // GET OLD SETTINGS BEFORE CHANGING THEM
+        // ========================================================
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const before =
+            await this.getSettings();
 
-                body: JSON.stringify(data)
-            }
-        );
 
-        const updatedSettings = await response.json();
+        // ========================================================
+        // UPDATE SETTINGS
+        // ========================================================
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
+
+
+        const updatedSettings =
+            await response.json();
+
 
         if (!response.ok) {
 
@@ -67,30 +119,32 @@ export const appSettingsRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "app_settings",
 
-                action: "update",
+            entity_id:
+                updatedSettings.id ?? null,
 
-                entity_type: "app_settings",
+            before:
+                before,
 
-                entity_id: updatedSettings.id ?? null,
+            after:
+                updatedSettings,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedSettings,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedSettings;

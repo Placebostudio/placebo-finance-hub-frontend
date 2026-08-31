@@ -73,6 +73,12 @@ export const vendorRepository = {
 
     async create(data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id ?? null;
+
         const response = await fetch(
             BASE_URL,
             {
@@ -82,7 +88,10 @@ export const vendorRepository = {
                     "Content-Type": "application/json"
                 },
 
-                body: JSON.stringify(data)
+                body: JSON.stringify({
+                    ...data,
+                    user_id: userId
+                })
             }
         );
 
@@ -94,7 +103,6 @@ export const vendorRepository = {
             );
         }
 
-
         const vendor =
             result.vendor ?? result;
 
@@ -102,9 +110,6 @@ export const vendorRepository = {
         // ========================================================
         // AUDIT LOG
         // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
 
         if (currentUser && vendor.id) {
 
@@ -136,22 +141,17 @@ export const vendorRepository = {
     // ============================================================
     // UPDATE VENDOR
     // ============================================================
-    //
-    // Can update all fields or only spam.
-    //
-    // Example:
-    //
-    // {
-    //     spam: true
-    // }
-    //
-    // ============================================================
 
     async update(id, data) {
 
         const before =
             await this.getById(id);
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id ?? null;
 
         const response = await fetch(
             `${BASE_URL}/${id}`,
@@ -162,7 +162,10 @@ export const vendorRepository = {
                     "Content-Type": "application/json"
                 },
 
-                body: JSON.stringify(data)
+                body: JSON.stringify({
+                    ...data,
+                    user_id: userId
+                })
             }
         );
 
@@ -175,7 +178,6 @@ export const vendorRepository = {
             );
         }
 
-
         const updatedVendor =
             result.vendor ?? result;
 
@@ -183,9 +185,6 @@ export const vendorRepository = {
         // ========================================================
         // AUDIT LOG
         // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
 
         if (currentUser) {
 
@@ -213,15 +212,22 @@ export const vendorRepository = {
         return updatedVendor;
     },
 
+
+    // ============================================================
+    // SOFT DELETE VENDOR
+    // ============================================================
+
     async softDelete(id) {
 
-        // Get the old version BEFORE changing it
-        const before = await this.getById(id);
+        const before =
+            await this.getById(id);
 
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        // ========================================================
-        // MARK VENDOR AS SPAM
-        // ========================================================
+        const userId =
+            currentUser?.id ?? null;
+
 
         const response = await fetch(
             `${BASE_URL}/${id}`,
@@ -233,12 +239,14 @@ export const vendorRepository = {
                 },
 
                 body: JSON.stringify({
-                    spam: true
+                    spam: true,
+                    user_id: userId
                 })
             }
         );
 
-        const updatedVendor = await response.json();
+        const updatedVendor =
+            await response.json();
 
         if (!response.ok) {
 
@@ -252,9 +260,6 @@ export const vendorRepository = {
         // ========================================================
         // AUDIT LOG
         // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
 
         if (currentUser) {
 
@@ -281,13 +286,10 @@ export const vendorRepository = {
 
         return updatedVendor;
     },
-    
+
+
     // ============================================================
     // DELETE VENDOR
-    // ============================================================
-    //
-    // Hard delete.
-    //
     // ============================================================
 
     async delete(id) {
@@ -295,11 +297,25 @@ export const vendorRepository = {
         const before =
             await this.getById(id);
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id ?? null;
+
 
         const response = await fetch(
             `${BASE_URL}/${id}`,
             {
-                method: "DELETE"
+                method: "DELETE",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    user_id: userId
+                })
             }
         );
 
@@ -316,9 +332,6 @@ export const vendorRepository = {
         // ========================================================
         // AUDIT LOG
         // ========================================================
-
-        const currentUser =
-            userRepository.getLoggedInUser();
 
         if (currentUser) {
 

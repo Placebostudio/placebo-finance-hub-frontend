@@ -17,13 +17,6 @@ import { matchRepository } from "./backend-matches.js";
 import { normalizeVendorName } from "@/lib/utils";
 import { scoreMatch } from "./reconciliation.service.js";
 
-
-
-
-
-
-
-
 // ============================================================
 // RECONCILIATION REPOSITORY
 // ============================================================
@@ -35,7 +28,6 @@ export const reconciliationRepository = {
     // ============================================================
 
     async getAllMatches() {
-
         return await matchRepository.getAll();
     },
 

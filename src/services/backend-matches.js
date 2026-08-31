@@ -12,38 +12,72 @@ export const matchRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
-            }
-
-        });
-
-        const queryString = params.toString();
-
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
-
-        const response = await fetch(url);
-
-        const data = await response.json();
-
-        if (!response.ok) {
+        if (!userId) {
             throw new Error(
-                data.error || "Failed to get matches"
+                "No logged-in user found"
             );
         }
 
+
+        const params =
+            new URLSearchParams();
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
+            }
+        );
+
+        params.set(
+            "user_id",
+            userId
+        );
+
+
+        const queryString =
+            params.toString();
+
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
+
+
+        const response =
+            await fetch(url);
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.error ||
+                "Failed to get matches"
+            );
+        }
+
+
         return data;
     },
+
 
     // ============================================================
     // GET ONE MATCH
@@ -51,18 +85,36 @@ export const matchRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+            );
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
 
             throw new Error(
-                data.error || "Failed to get match"
+                data.error ||
+                "Failed to get match"
             );
         }
+
 
         return data;
     },
@@ -74,11 +126,27 @@ export const matchRepository = {
 
     async getByExpense(expenseId) {
 
-        const response = await fetch(
-            `${BASE_URL}/expense/${expenseId}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/expense/${expenseId}?user_id=${encodeURIComponent(userId)}`
+            );
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
 
@@ -87,6 +155,7 @@ export const matchRepository = {
                 "Failed to get matches for expense"
             );
         }
+
 
         return data;
     },
@@ -98,11 +167,27 @@ export const matchRepository = {
 
     async getByTransaction(transactionId) {
 
-        const response = await fetch(
-            `${BASE_URL}/transaction/${transactionId}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/transaction/${transactionId}?user_id=${encodeURIComponent(userId)}`
+            );
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
 
@@ -111,6 +196,7 @@ export const matchRepository = {
                 "Failed to get matches for transaction"
             );
         }
+
 
         return data;
     },
@@ -122,25 +208,47 @@ export const matchRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
 
             throw new Error(
-                result.error || "Failed to create match"
+                result.error ||
+                "Failed to create match"
             );
         }
 
@@ -153,28 +261,33 @@ export const matchRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser && match.id) {
+        if (match.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    userId,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "match",
+                entity_type:
+                    "match",
 
-                entity_id: match.id,
+                entity_id:
+                    match.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: match,
+                after:
+                    match,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -189,29 +302,51 @@ export const matchRepository = {
 
     async update(id, data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify(data)
-            }
-        );
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const result = await response.json();
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
 
             throw new Error(
-                result.error || "Failed to update match"
+                result.error ||
+                "Failed to update match"
             );
         }
 
@@ -224,30 +359,32 @@ export const matchRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "match",
 
-                action: "update",
+            entity_id:
+                id,
 
-                entity_type: "match",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedMatch,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedMatch,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;
@@ -263,26 +400,45 @@ export const matchRepository = {
 
     async softDelete(id) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    spam: true
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        spam: true,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const result = await response.json();
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
 
@@ -301,30 +457,32 @@ export const matchRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "soft_delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "match",
 
-                action: "soft_delete",
+            entity_id:
+                id,
 
-                entity_type: "match",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedMatch,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedMatch,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;
@@ -339,18 +497,35 @@ export const matchRepository = {
 
     async delete(id) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                {
+                    method: "DELETE"
+                }
+            );
 
-        const result = await response.json();
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
 
@@ -365,30 +540,32 @@ export const matchRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "match",
 
-                action: "delete",
+            entity_id:
+                id,
 
-                entity_type: "match",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                null,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;

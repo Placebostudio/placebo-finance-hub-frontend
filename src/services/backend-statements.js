@@ -1,4 +1,5 @@
 import { auditRepository } from "./backend-audits";
+import { userRepository } from "./backend-users";
 
 const BASE_URL =
     `${process.env.NEXT_PUBLIC_API_URL}/api/statements`;
@@ -12,36 +13,69 @@ export const statementRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const params =
+            new URLSearchParams();
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
+
             }
+        );
 
-        });
 
-        const queryString = params.toString();
+        params.set(
+            "user_id",
+            userId
+        );
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
 
-        const response = await fetch(url);
+        const queryString =
+            params.toString();
 
-        const data = await response.json();
+        const url =
+            `${BASE_URL}?${queryString}`;
+
+
+        const response =
+            await fetch(url);
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 data.error ||
                 "Failed to get statements"
             );
         }
+
 
         return data.statements ?? data;
     },
@@ -54,18 +88,37 @@ export const statementRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+            );
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 data.error ||
                 "Failed to get statement"
             );
         }
+
 
         return data.statement ?? data;
     },
@@ -90,42 +143,81 @@ export const statementRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to create statement"
             );
         }
 
+
         const statement =
             result.statement ?? result;
+
 
         // --------------------------------------------------------
         // AUDIT LOG
         // --------------------------------------------------------
 
         await auditRepository.create({
-            action: "create",
-            entity_type: "statement",
-            entity_id: statement.id,
-            before: null,
-            after: statement
+
+            actor_id:
+                userId,
+
+            action:
+                "create",
+
+            entity_type:
+                "statement",
+
+            entity_id:
+                statement.id,
+
+            before:
+                null,
+
+            after:
+                statement
         });
+
 
         return statement;
     },
@@ -138,9 +230,23 @@ export const statementRepository = {
 
     async update(id, data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         // Get original state for audit
         const before =
             await this.getById(id);
+
 
         if (!before) {
             throw new Error(
@@ -148,42 +254,67 @@ export const statementRepository = {
             );
         }
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                body: JSON.stringify(data)
-            }
-        );
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        const result = await response.json();
+                    body: JSON.stringify({
+                        ...data,
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to update statement"
             );
         }
 
+
         const statement =
             result.statement ?? result;
+
 
         // --------------------------------------------------------
         // AUDIT LOG
         // --------------------------------------------------------
 
         await auditRepository.create({
-            action: "update",
-            entity_type: "statement",
-            entity_id: id,
+
+            actor_id:
+                userId,
+
+            action:
+                "update",
+
+            entity_type:
+                "statement",
+
+            entity_id:
+                id,
+
             before,
-            after: statement
+            after:
+                statement
         });
+
 
         return statement;
     },
@@ -196,8 +327,22 @@ export const statementRepository = {
 
     async softDelete(id) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
+
 
         if (!before) {
             throw new Error(
@@ -205,44 +350,70 @@ export const statementRepository = {
             );
         }
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                body: JSON.stringify({
-                    spam: true
-                })
-            }
-        );
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-        const result = await response.json();
+                    body: JSON.stringify({
+
+                        spam:
+                            true,
+
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to soft delete statement"
             );
         }
 
+
         const statement =
             result.statement ?? result;
+
 
         // --------------------------------------------------------
         // AUDIT LOG
         // --------------------------------------------------------
 
         await auditRepository.create({
-            action: "soft_delete",
-            entity_type: "statement",
-            entity_id: id,
+
+            actor_id:
+                userId,
+
+            action:
+                "soft_delete",
+
+            entity_type:
+                "statement",
+
+            entity_id:
+                id,
+
             before,
-            after: statement
+            after:
+                statement
         });
+
 
         return statement;
     },
@@ -255,8 +426,22 @@ export const statementRepository = {
 
     async delete(id) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
+
 
         if (!before) {
             throw new Error(
@@ -264,33 +449,52 @@ export const statementRepository = {
             );
         }
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to delete statement"
             );
         }
 
+
         // --------------------------------------------------------
         // AUDIT LOG
         // --------------------------------------------------------
 
         await auditRepository.create({
-            action: "delete",
-            entity_type: "statement",
-            entity_id: id,
+
+            actor_id:
+                userId,
+
+            action:
+                "delete",
+
+            entity_type:
+                "statement",
+
+            entity_id:
+                id,
+
             before,
-            after: null
+            after:
+                null
         });
+
 
         return result;
     }

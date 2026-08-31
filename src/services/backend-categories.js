@@ -1,4 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/categories`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/categories`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
@@ -11,37 +12,57 @@ export const categoryRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        if (filters.spam !== undefined && filters.spam !== null) {
-            params.set("spam", String(filters.spam));
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
         }
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const params =
+            new URLSearchParams();
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        params.set(
+            "user_id",
+            currentUser.id
+        );
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
             }
+        );
 
-        });
+        const queryString =
+            params.toString();
 
-        const queryString = params.toString();
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
+        const response =
+            await fetch(url);
 
-        const response = await fetch(url);
-
-        const data = await response.json();
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get categories"
+                data.error ||
+                "Failed to get categories"
             );
         }
 
@@ -55,15 +76,27 @@ export const categoryRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(currentUser.id)}`
+            );
+
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get category"
+                data.error ||
+                "Failed to get category"
             );
         }
 
@@ -77,24 +110,41 @@ export const categoryRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-                body: JSON.stringify(data)
-            }
-        );
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
 
-        const result = await response.json();
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id:
+                            currentUser.id
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to create category"
+                result.error ||
+                "Failed to create category"
             );
         }
 
@@ -103,31 +153,35 @@ export const categoryRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser && result.id) {
+        if (result.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    currentUser.id,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "category",
+                entity_type:
+                    "category",
 
-                entity_id: result.id,
+                entity_id:
+                    result.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: result,
+                after:
+                    result,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
-
 
         return result;
     },
@@ -139,24 +193,41 @@ export const categoryRepository = {
 
     async update(id, data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
         // Get old version before changing it
-        const before = await this.getById(id);
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify(data)
-            }
-        );
+                    body: JSON.stringify({
+                        ...data,
+                        user_id:
+                            currentUser.id
+                    })
+                }
+            );
 
-        const updatedCategory = await response.json();
+        const updatedCategory =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
@@ -170,30 +241,32 @@ export const categoryRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                currentUser.id,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "category",
 
-                action: "update",
+            entity_id:
+                id,
 
-                entity_type: "category",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedCategory,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedCategory,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedCategory;
@@ -202,32 +275,46 @@ export const categoryRepository = {
 
     // ============================================================
     // SOFT DELETE CATEGORY
-    //
-    // Soft delete is implemented through the normal PUT route.
-    // The exact field should match the category schema.
     // ============================================================
 
     async softDelete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    deleted_at: new Date().toISOString()
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        deleted_at:
+                            new Date().toISOString(),
 
-        const updatedCategory = await response.json();
+                        user_id:
+                            currentUser.id
+                    })
+                }
+            );
+
+        const updatedCategory =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
@@ -241,30 +328,32 @@ export const categoryRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                currentUser.id,
 
-            await auditRepository.create({
+            action:
+                "soft_delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "category",
 
-                action: "soft_delete",
+            entity_id:
+                id,
 
-                entity_type: "category",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedCategory,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedCategory,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedCategory;
@@ -277,21 +366,34 @@ export const categoryRepository = {
 
     async delete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        if (!currentUser) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(currentUser.id)}`,
+                {
+                    method: "DELETE"
+                }
+            );
 
-        const result = await response.json();
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to delete category"
+                result.error ||
+                "Failed to delete category"
             );
         }
 
@@ -300,30 +402,32 @@ export const categoryRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                currentUser.id,
 
-            await auditRepository.create({
+            action:
+                "delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "category",
 
-                action: "delete",
+            entity_id:
+                id,
 
-                entity_type: "category",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                null,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;

@@ -248,6 +248,19 @@ export const userRepository = {
 
     async create(data) {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const response =
             await fetch(
                 BASE_URL,
@@ -260,6 +273,9 @@ export const userRepository = {
                     },
 
                     body: JSON.stringify({
+
+                        user_id:
+                            userId,
 
                         username:
                             data.username,
@@ -303,19 +319,12 @@ export const userRepository = {
         // AUDIT USER CREATION
         // ========================================================
 
-        const currentUser =
-            this.getLoggedInUser();
-
-
-        if (
-            currentUser &&
-            user?.id
-        ) {
+        if (user?.id) {
 
             await auditRepository.create({
 
                 actor_id:
-                    currentUser.id,
+                    userId,
 
                 action:
                     "create",
@@ -352,6 +361,19 @@ export const userRepository = {
 
     async update(id, changes) {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         // ========================================================
         // GET ORIGINAL USER
         // ========================================================
@@ -361,6 +383,9 @@ export const userRepository = {
 
 
         const body = {
+
+            user_id:
+                userId,
 
             email:
                 changes.email,
@@ -428,38 +453,31 @@ export const userRepository = {
         // AUDIT USER UPDATE
         // ========================================================
 
-        const currentUser =
-            this.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                userId,
 
-        if (currentUser) {
+            action:
+                "update",
 
-            await auditRepository.create({
+            entity_type:
+                "user",
 
-                actor_id:
-                    currentUser.id,
+            entity_id:
+                id,
 
-                action:
-                    "update",
+            before,
 
-                entity_type:
-                    "user",
+            after:
+                updatedUser,
 
-                entity_id:
-                    id,
+            ip_address:
+                null,
 
-                before,
-
-                after:
-                    updatedUser,
-
-                ip_address:
-                    null,
-
-                user_agent:
-                    navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedUser;
@@ -471,7 +489,20 @@ export const userRepository = {
     // DELETE /api/users/:userid
     // ============================================================
 
-    async delete(id, requester_id) {
+    async delete(id) {
+
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
 
         const before =
             await this.getById(id);
@@ -489,7 +520,8 @@ export const userRepository = {
                     },
 
                     body: JSON.stringify({
-                        requester_id
+                        user_id:
+                            userId
                     })
                 }
             );
@@ -512,38 +544,31 @@ export const userRepository = {
         // AUDIT USER DELETION
         // ========================================================
 
-        const currentUser =
-            this.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                userId,
 
-        if (currentUser) {
+            action:
+                "delete",
 
-            await auditRepository.create({
+            entity_type:
+                "user",
 
-                actor_id:
-                    currentUser.id,
+            entity_id:
+                id,
 
-                action:
-                    "delete",
+            before,
 
-                entity_type:
-                    "user",
+            after:
+                null,
 
-                entity_id:
-                    id,
+            ip_address:
+                null,
 
-                before,
-
-                after:
-                    null,
-
-                ip_address:
-                    null,
-
-                user_agent:
-                    navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;
@@ -557,6 +582,19 @@ export const userRepository = {
 
     async reactivate(id) {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
 
@@ -565,7 +603,17 @@ export const userRepository = {
             await fetch(
                 `${BASE_URL}/${id}/reactivate`,
                 {
-                    method: "PUT"
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        user_id:
+                            userId
+                    })
                 }
             );
 
@@ -591,38 +639,31 @@ export const userRepository = {
         // AUDIT USER REACTIVATION
         // ========================================================
 
-        const currentUser =
-            this.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                userId,
 
-        if (currentUser) {
+            action:
+                "reactivate",
 
-            await auditRepository.create({
+            entity_type:
+                "user",
 
-                actor_id:
-                    currentUser.id,
+            entity_id:
+                id,
 
-                action:
-                    "reactivate",
+            before,
 
-                entity_type:
-                    "user",
+            after:
+                user,
 
-                entity_id:
-                    id,
+            ip_address:
+                null,
 
-                before,
-
-                after:
-                    user,
-
-                ip_address:
-                    null,
-
-                user_agent:
-                    navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return user;
@@ -636,6 +677,19 @@ export const userRepository = {
 
     async acceptInvitation(id) {
 
+        const currentUser =
+            this.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
             await this.getById(id);
 
@@ -644,7 +698,17 @@ export const userRepository = {
             await fetch(
                 `${BASE_URL}/${id}/accept-invitation`,
                 {
-                    method: "PUT"
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        user_id:
+                            userId
+                    })
                 }
             );
 
@@ -670,38 +734,31 @@ export const userRepository = {
         // AUDIT INVITATION ACCEPTANCE
         // ========================================================
 
-        const currentUser =
-            this.getLoggedInUser();
+        await auditRepository.create({
 
+            actor_id:
+                userId,
 
-        if (currentUser) {
+            action:
+                "accept_invitation",
 
-            await auditRepository.create({
+            entity_type:
+                "user",
 
-                actor_id:
-                    currentUser.id,
+            entity_id:
+                id,
 
-                action:
-                    "accept_invitation",
+            before,
 
-                entity_type:
-                    "user",
+            after:
+                user,
 
-                entity_id:
-                    id,
+            ip_address:
+                null,
 
-                before,
-
-                after:
-                    user,
-
-                ip_address:
-                    null,
-
-                user_agent:
-                    navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return user;

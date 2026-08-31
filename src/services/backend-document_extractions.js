@@ -1,4 +1,5 @@
 import { auditRepository } from "@/services/backend-audits";
+import { userRepository } from "@/services/backend-users";
 
 const BASE_URL =
     `${process.env.NEXT_PUBLIC_API_URL}/api/document_extractions`;
@@ -11,40 +12,72 @@ export const documentExtractionRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        if (filters.spam) {
-            params.set("spam", filters.spam);
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
         }
 
-        Object.entries(filters).forEach(([key, value]) => {
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        const params =
+            new URLSearchParams();
+
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
             }
+        );
 
-        });
 
-        const queryString = params.toString();
+        params.set(
+            "user_id",
+            userId
+        );
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
 
-        const response = await fetch(url);
+        const queryString =
+            params.toString();
 
-        const data = await response.json();
+
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
+
+
+        const response =
+            await fetch(url);
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 data.error ||
                 "Failed to get document extractions"
             );
         }
+
 
         return data;
     },
@@ -59,18 +92,46 @@ export const documentExtractionRepository = {
 
     async getById(documentId) {
 
-        const response = await fetch(
-            `${BASE_URL}/${documentId}`
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            userId
         );
 
-        const data = await response.json();
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${documentId}?${params.toString()}`
+            );
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 data.error ||
                 "Failed to get document extraction"
             );
         }
+
 
         return data;
     },
@@ -78,15 +139,25 @@ export const documentExtractionRepository = {
 
     // ============================================================
     // CREATE DOCUMENT EXTRACTION
-    //
-    // The file has ALREADY been uploaded.
-    //
-    // This only creates the document_extractions row.
     // ============================================================
 
     async create(data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const extractionData = {
+
             document_id:
                 data.document_id,
 
@@ -112,31 +183,44 @@ export const documentExtractionRepository = {
                 data.is_current ?? true,
 
             spam:
-                data.spam ?? false
+                data.spam ?? false,
+
+            user_id:
+                userId
         };
 
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify(extractionData)
-            }
-        );
+                    body:
+                        JSON.stringify(
+                            extractionData
+                        )
+                }
+            );
 
-        const result = await response.json();
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to create document extraction"
             );
         }
+
 
         const extraction =
             result.extraction ?? result;
@@ -147,17 +231,32 @@ export const documentExtractionRepository = {
         // ========================================================
 
         await auditRepository.create({
-            action: "create",
-            entity_type: "document_extraction",
-            entity_id: data.document_id,
 
-            before: null,
+            actor_id:
+                userId,
 
-            after: extraction,
+            action:
+                "create",
+
+            entity_type:
+                "document_extraction",
+
+            entity_id:
+                data.document_id,
+
+            before:
+                null,
+
+            after:
+                extraction,
 
             details: {
-                document_id: data.document_id,
-                method: data.method
+
+                document_id:
+                    data.document_id,
+
+                method:
+                    data.method
             }
         });
 
@@ -175,31 +274,60 @@ export const documentExtractionRepository = {
 
     async update(documentId, data) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
-            await this.getById(documentId);
+            await this.getById(
+                documentId
+            );
 
 
-        const response = await fetch(
-            `${BASE_URL}/${documentId}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${documentId}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify(data)
-            }
-        );
+                    body:
+                        JSON.stringify({
 
-        const result = await response.json();
+                            ...data,
+
+                            user_id:
+                                userId
+                        })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to update document extraction"
             );
         }
+
 
         const extraction =
             result.extraction ?? result;
@@ -210,15 +338,29 @@ export const documentExtractionRepository = {
         // ========================================================
 
         await auditRepository.create({
-            action: "update",
-            entity_type: "document_extraction",
-            entity_id: documentId,
 
-            before,
-            after: extraction,
+            actor_id:
+                userId,
+
+            action:
+                "update",
+
+            entity_type:
+                "document_extraction",
+
+            entity_id:
+                documentId,
+
+            before:
+                before,
+
+            after:
+                extraction,
 
             details: {
-                document_id: documentId
+
+                document_id:
+                    documentId
             }
         });
 
@@ -232,40 +374,64 @@ export const documentExtractionRepository = {
 
     // ============================================================
     // MARK EXTRACTION AS SPAM
-    //
-    // There is no deleted_at column.
-    // spam is the appropriate field.
     // ============================================================
 
     async softDelete(documentId) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
-            await this.getById(documentId);
+            await this.getById(
+                documentId
+            );
 
 
-        const response = await fetch(
-            `${BASE_URL}/${documentId}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${documentId}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    spam: true
-                })
-            }
-        );
+                    body: JSON.stringify({
 
-        const result = await response.json();
+                        spam:
+                            true,
+
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to mark document extraction as spam"
             );
         }
+
 
         const extraction =
             result.extraction ?? result;
@@ -276,16 +442,32 @@ export const documentExtractionRepository = {
         // ========================================================
 
         await auditRepository.create({
-            action: "soft_delete",
-            entity_type: "document_extraction",
-            entity_id: documentId,
 
-            before,
-            after: extraction,
+            actor_id:
+                userId,
+
+            action:
+                "soft_delete",
+
+            entity_type:
+                "document_extraction",
+
+            entity_id:
+                documentId,
+
+            before:
+                before,
+
+            after:
+                extraction,
 
             details: {
-                document_id: documentId,
-                reason: "marked as spam"
+
+                document_id:
+                    documentId,
+
+                reason:
+                    "marked as spam"
             }
         });
 
@@ -305,20 +487,49 @@ export const documentExtractionRepository = {
 
     async delete(documentId) {
 
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
         const before =
-            await this.getById(documentId);
+            await this.getById(
+                documentId
+            );
 
 
-        const response = await fetch(
-            `${BASE_URL}/${documentId}`,
-            {
-                method: "DELETE"
-            }
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            userId
         );
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${documentId}?${params.toString()}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to delete document extraction"
@@ -331,16 +542,32 @@ export const documentExtractionRepository = {
         // ========================================================
 
         await auditRepository.create({
-            action: "delete",
-            entity_type: "document_extraction",
-            entity_id: documentId,
 
-            before,
-            after: null,
+            actor_id:
+                userId,
+
+            action:
+                "delete",
+
+            entity_type:
+                "document_extraction",
+
+            entity_id:
+                documentId,
+
+            before:
+                before,
+
+            after:
+                null,
 
             details: {
-                document_id: documentId,
-                permanent: true
+
+                document_id:
+                    documentId,
+
+                permanent:
+                    true
             }
         });
 

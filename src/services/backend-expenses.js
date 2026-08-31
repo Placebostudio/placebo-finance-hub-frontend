@@ -1,4 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/expenses`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/expenses`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
@@ -10,29 +11,69 @@ export const expenseRepository = {
     // ============================================================
 
     async getAll(filters = {}) {
-        const params = new URLSearchParams();
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            userId
+        );
 
         if (filters.vendor_id) {
-            params.set("vendor_id", filters.vendor_id);
+            params.set(
+                "vendor_id",
+                filters.vendor_id
+            );
         }
 
         if (filters.period) {
-            params.set("period", filters.period);
+            params.set(
+                "period",
+                filters.period
+            );
         }
 
-        if (filters.spam !== undefined && filters.spam !== null) {
-            params.set("spam", String(filters.spam));
+        if (
+            filters.spam !== undefined &&
+            filters.spam !== null
+        ) {
+            params.set(
+                "spam",
+                String(filters.spam)
+            );
         }
 
-        const query = params.toString();
+        const response =
+            await fetch(
+                `${BASE_URL}?${params.toString()}`
+            );
 
-        const response = await fetch(
-            `${BASE_URL}${query ? `?${query}` : ""}`
-        );
 
         if (!response.ok) {
-            throw new Error("Failed to fetch expenses");
+
+            const data =
+                await response.json()
+                    .catch(() => ({}));
+
+            throw new Error(
+                data.error ||
+                "Failed to fetch expenses"
+            );
         }
+
 
         return response.json();
     },
@@ -44,34 +85,82 @@ export const expenseRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
 
-        if (!response.ok) {
+        if (!userId) {
             throw new Error(
-                data.error || "Failed to get expense"
+                "No logged-in user found"
             );
         }
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.error ||
+                "Failed to get expense"
+            );
+        }
+
 
         return data;
     },
 
+
+    // ============================================================
+    // GET EXPENSE BY DOCUMENT ID
+    // ============================================================
+
     async getByDocumentId(documentId) {
-        const response = await fetch(
-            `${BASE_URL}/document/${documentId}`
-        );
+
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const response =
+            await fetch(
+                `${BASE_URL}/document/${documentId}?user_id=${encodeURIComponent(userId)}`
+            );
+
 
         if (response.status === 404) {
             return null;
         }
 
+
         if (!response.ok) {
-            const data = await response.json().catch(() => ({}));
-            throw new Error(data.error || "Failed to load expense");
+
+            const data =
+                await response.json()
+                    .catch(() => ({}));
+
+            throw new Error(
+                data.error ||
+                "Failed to load expense"
+            );
         }
+
 
         return response.json();
     },
@@ -95,57 +184,88 @@ export const expenseRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
-
-        const result = await response.json();
-
-        if (!response.ok) {
+        if (!userId) {
             throw new Error(
-                result.error || "Failed to create expense"
+                "No logged-in user found"
             );
         }
+
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                result.error ||
+                "Failed to create expense"
+            );
+        }
+
+
+        const expense =
+            result.expense ?? result;
 
 
         // ========================================================
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        const expense =
-            result.expense ?? result;
-
-        if (currentUser && expense.id) {
+        if (expense.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    userId,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "expense",
+                entity_type:
+                    "expense",
 
-                entity_id: expense.id,
+                entity_id:
+                    expense.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: expense,
+                after:
+                    expense,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -160,26 +280,50 @@ export const expenseRepository = {
 
     async update(id, data) {
 
-        // Get old version BEFORE changing it
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const before =
+            await this.getById(id);
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
 
-                body: JSON.stringify(data)
-            }
-        );
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-        const result = await response.json();
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to update expense"
@@ -195,30 +339,32 @@ export const expenseRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "expense",
 
-                action: "update",
+            entity_id:
+                id,
 
-                entity_type: "expense",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedExpense,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedExpense,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedExpense;
@@ -228,115 +374,143 @@ export const expenseRepository = {
     // ============================================================
     // SOFT DELETE EXPENSE
     // ============================================================
-    //
-    // Soft delete is an UPDATE.
-    //
-    // Sends:
-    // {
-    //     deleted_at: current timestamp
-    // }
-    //
-    // ============================================================
 
     async softDelete(id) {
 
-        // Get old version BEFORE changing it
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        // ========================================================
-        // UPDATE EXPENSE
-        // ========================================================
+        const userId =
+            currentUser?.id;
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
 
-                body: JSON.stringify({
-                    deleted_at:
-                        new Date().toISOString(),
-                    spam: true
-                })
-            }
-        );
+        const before =
+            await this.getById(id);
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+
+                        deleted_at:
+                            new Date().toISOString(),
+
+                        spam:
+                            true,
+
+                        user_id:
+                            userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to soft delete expense"
             );
         }
 
+
         const updatedExpense =
             result.expense ?? result;
+
 
         // ========================================================
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "soft_delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "expense",
 
-                action: "soft_delete",
+            entity_id:
+                id,
 
-                entity_type: "expense",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedExpense,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedExpense,
+            user_agent:
+                navigator.userAgent
+        });
 
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
 
         return updatedExpense;
     },
 
 
     // ============================================================
-    // DELETE EXPENSE
-    // ============================================================
-    //
-    // This is the FINAL / HARD DELETE.
-    //
+    // HARD DELETE EXPENSE
     // ============================================================
 
     async delete(id) {
 
-        // Get old version BEFORE deleting
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        // ========================================================
-        // DELETE EXPENSE
-        // ========================================================
+        const before =
+            await this.getById(id);
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
+
             throw new Error(
                 result.error ||
                 "Failed to delete expense"
@@ -348,30 +522,32 @@ export const expenseRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "expense",
 
-                action: "delete",
+            entity_id:
+                id,
 
-                entity_type: "expense",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                null,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;

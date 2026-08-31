@@ -11,33 +11,60 @@ export const jobRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const params =
+            new URLSearchParams();
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
             }
+        );
 
-        });
+        params.set(
+            "user_id",
+            userId
+        );
 
-        const queryString = params.toString();
+        const queryString =
+            params.toString();
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
 
-        const response = await fetch(url);
+        const response =
+            await fetch(url);
 
-        const data = await response.json();
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get jobs"
+                data.error ||
+                "Failed to get jobs"
             );
         }
 
@@ -51,15 +78,38 @@ export const jobRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            userId
         );
 
-        const data = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?${params.toString()}`
+            );
+
+        const data =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get job"
+                data.error ||
+                "Failed to get job"
             );
         }
 
@@ -73,24 +123,43 @@ export const jobRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to create job"
+                result.error ||
+                "Failed to create job"
             );
         }
 
@@ -99,28 +168,33 @@ export const jobRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser && result.id) {
+        if (result.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    userId,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "job",
+                entity_type:
+                    "job",
 
-                entity_id: result.id,
+                entity_id:
+                    result.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: result,
+                after:
+                    result,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -135,23 +209,42 @@ export const jobRepository = {
 
     async update(id, data) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify(data)
-            }
-        );
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const updatedJob = await response.json();
+        const updatedJob =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
@@ -165,30 +258,32 @@ export const jobRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "job",
 
-                action: "update",
+            entity_id:
+                id,
 
-                entity_type: "job",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedJob,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedJob,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedJob;
@@ -197,31 +292,46 @@ export const jobRepository = {
 
     // ============================================================
     // SOFT DELETE JOB
-    //
-    // Soft delete is an UPDATE of spam only.
     // ============================================================
 
     async softDelete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
 
-                body: JSON.stringify({
-                    spam: true
-                })
-            }
-        );
+                    body: JSON.stringify({
+                        spam: true,
+                        user_id: userId
+                    })
+                }
+            );
 
-        const updatedJob = await response.json();
+        const updatedJob =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
@@ -235,30 +345,32 @@ export const jobRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "soft_delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "job",
 
-                action: "soft_delete",
+            entity_id:
+                id,
 
-                entity_type: "job",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedJob,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedJob,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedJob;
@@ -267,23 +379,44 @@ export const jobRepository = {
 
     // ============================================================
     // DELETE JOB
-    //
-    // Permanent/final delete.
     // ============================================================
 
     async delete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+        const before =
+            await this.getById(id);
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            "user_id",
+            userId
         );
 
-        const result = await response.json();
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?${params.toString()}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+        const result =
+            await response.json();
 
         if (!response.ok) {
             throw new Error(
@@ -297,30 +430,32 @@ export const jobRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "job",
 
-                action: "delete",
+            entity_id:
+                id,
 
-                entity_type: "job",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                null,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;

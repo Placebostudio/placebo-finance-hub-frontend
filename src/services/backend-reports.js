@@ -1,4 +1,5 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/reports`;
+const BASE_URL =
+    `${process.env.NEXT_PUBLIC_API_URL}/api/reports`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
@@ -11,35 +12,67 @@ export const reportRepository = {
 
     async getAll(filters = {}) {
 
-        const params = new URLSearchParams();
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        Object.entries(filters).forEach(([key, value]) => {
+        const userId =
+            currentUser?.id;
 
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ""
-            ) {
-                params.append(key, value);
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const params =
+            new URLSearchParams();
+
+        Object.entries(filters).forEach(
+            ([key, value]) => {
+
+                if (
+                    value !== undefined &&
+                    value !== null &&
+                    value !== ""
+                ) {
+                    params.append(
+                        key,
+                        String(value)
+                    );
+                }
             }
+        );
 
-        });
+        params.set(
+            "user_id",
+            userId
+        );
 
-        const queryString = params.toString();
 
-        const url = queryString
-            ? `${BASE_URL}?${queryString}`
-            : BASE_URL;
+        const queryString =
+            params.toString();
 
-        const response = await fetch(url);
+        const url =
+            queryString
+                ? `${BASE_URL}?${queryString}`
+                : BASE_URL;
 
-        const data = await response.json();
+
+        const response =
+            await fetch(url);
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get reports"
+                data.error ||
+                "Failed to get reports"
             );
         }
+
 
         return data;
     },
@@ -51,17 +84,35 @@ export const reportRepository = {
 
     async getById(id) {
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`
+            );
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get report"
+                data.error ||
+                "Failed to get report"
             );
         }
+
 
         return data;
     },
@@ -73,24 +124,46 @@ export const reportRepository = {
 
     async create(data) {
 
-        const response = await fetch(
-            BASE_URL,
-            {
-                method: "POST",
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
+        const userId =
+            currentUser?.id;
 
-                body: JSON.stringify(data)
-            }
-        );
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                BASE_URL,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
-                result.error || "Failed to create report"
+                result.error ||
+                "Failed to create report"
             );
         }
 
@@ -99,28 +172,33 @@ export const reportRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
-
-        if (currentUser && result.id) {
+        if (result.id) {
 
             await auditRepository.create({
 
-                actor_id: currentUser.id,
+                actor_id:
+                    userId,
 
-                action: "create",
+                action:
+                    "create",
 
-                entity_type: "report",
+                entity_type:
+                    "report",
 
-                entity_id: result.id,
+                entity_id:
+                    result.id,
 
-                before: null,
+                before:
+                    null,
 
-                after: result,
+                after:
+                    result,
 
-                ip_address: null,
+                ip_address:
+                    null,
 
-                user_agent: navigator.userAgent
+                user_agent:
+                    navigator.userAgent
             });
         }
 
@@ -135,23 +213,45 @@ export const reportRepository = {
 
     async update(id, data) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const before =
+            await this.getById(id);
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
 
-                body: JSON.stringify(data)
-            }
-        );
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-        const updatedReport = await response.json();
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        ...data,
+                        user_id: userId
+                    })
+                }
+            );
+
+
+        const updatedReport =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
@@ -165,30 +265,32 @@ export const reportRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "update",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "report",
 
-                action: "update",
+            entity_id:
+                id,
 
-                entity_type: "report",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedReport,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedReport,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedReport;
@@ -203,25 +305,45 @@ export const reportRepository = {
 
     async softDelete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "PUT",
+        const before =
+            await this.getById(id);
 
-                headers: {
-                    "Content-Type": "application/json"
-                },
 
-                body: JSON.stringify({
-                    spam: true
-                })
-            }
-        );
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}`,
+                {
+                    method: "PUT",
 
-        const updatedReport = await response.json();
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        spam: true,
+                        user_id: userId
+                    })
+                }
+            );
+
+
+        const updatedReport =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
@@ -235,30 +357,32 @@ export const reportRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "soft_delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "report",
 
-                action: "soft_delete",
+            entity_id:
+                id,
 
-                entity_type: "report",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                updatedReport,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: updatedReport,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return updatedReport;
@@ -273,17 +397,35 @@ export const reportRepository = {
 
     async delete(id) {
 
-        const before = await this.getById(id);
+        const currentUser =
+            userRepository.getLoggedInUser();
+
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
 
 
-        const response = await fetch(
-            `${BASE_URL}/${id}`,
-            {
-                method: "DELETE"
-            }
-        );
+        const before =
+            await this.getById(id);
 
-        const result = await response.json();
+
+        const response =
+            await fetch(
+                `${BASE_URL}/${id}?user_id=${encodeURIComponent(userId)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
@@ -297,48 +439,74 @@ export const reportRepository = {
         // AUDIT LOG
         // ========================================================
 
-        const currentUser =
-            userRepository.getLoggedInUser();
+        await auditRepository.create({
 
-        if (currentUser) {
+            actor_id:
+                userId,
 
-            await auditRepository.create({
+            action:
+                "delete",
 
-                actor_id: currentUser.id,
+            entity_type:
+                "report",
 
-                action: "delete",
+            entity_id:
+                id,
 
-                entity_type: "report",
+            before:
+                before,
 
-                entity_id: id,
+            after:
+                null,
 
-                before: before,
+            ip_address:
+                null,
 
-                after: null,
-
-                ip_address: null,
-
-                user_agent: navigator.userAgent
-            });
-        }
+            user_agent:
+                navigator.userAgent
+        });
 
 
         return result;
     },
 
+
+    // ============================================================
+    // GET EXPENSE LEDGER
+    // ============================================================
+
     async getExpenseLedger() {
 
-        const response = await fetch(
-            `${BASE_URL}/expense-ledger`
-        );
+        const currentUser =
+            userRepository.getLoggedInUser();
 
-        const data = await response.json();
+        const userId =
+            currentUser?.id;
+
+        if (!userId) {
+            throw new Error(
+                "No logged-in user found"
+            );
+        }
+
+
+        const response =
+            await fetch(
+                `${BASE_URL}/expense-ledger?user_id=${encodeURIComponent(userId)}`
+            );
+
+
+        const data =
+            await response.json();
+
 
         if (!response.ok) {
             throw new Error(
-                data.error || "Failed to get expense ledger"
+                data.error ||
+                "Failed to get expense ledger"
             );
         }
+
 
         return data;
     }
