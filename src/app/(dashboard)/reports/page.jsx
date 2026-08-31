@@ -50,9 +50,9 @@ function OverviewTab() {
           allTxns,
           expenseLedger,
         ] = await Promise.all([
-          expenseRepository.getAll({ period }),
-          transactionRepository.getAll(),
-          expenseLedgerRepository.getAll({ period }),
+          expenseRepository.getAll({ period, spam: false}),
+          transactionRepository.getAll({statement_period: period, spam: false}),
+          expenseLedgerRepository.getAll({ period, spam: false }),
         ]);
 
         const confirmed = reconciliationService.getConfirmed();

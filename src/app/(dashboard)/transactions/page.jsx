@@ -156,12 +156,19 @@ export default function TransactionsPage() {
 
   async function load() {
     try {
+      console.log(selectedPeriod)
       const [
         statementsData,
         transactionsData
-      ] = await Promise.all([
-        statementRepository.getAll({ spam: false }),
-        transactionRepository.getAll({ spam: false })
+      ] = await Promise.all([statementRepository.getAll({
+        period: selectedPeriod,
+        spam: false,
+      }),
+
+      transactionRepository.getAll({
+        statement_period: selectedPeriod,
+        spam: false,
+      }),
       ]);
 
       setStatements(statementsData);

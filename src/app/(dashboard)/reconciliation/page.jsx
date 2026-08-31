@@ -18,58 +18,133 @@ import { formatCurrency, formatDate, buildPeriod, periodLabel } from "@/lib/util
 import { PeriodSelector } from "@/components/layout/period-selector";
 import { usePeriodStore } from "@/store/period";
 import { toast } from "sonner";
+import { statementRepository } from "@/services/backend-statements";
+import { expenseRepository } from "@/services/backend-expenses";
+import { transactionRepository } from "@/services/backend-transactions";
+import { reconciliationRepository } from "@/services/backend-reconciliation";
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 function MatchTypeConfig(type) {
   return {
-    strong_candidate:   { label: "Strong Candidate",   variant: "success" },
+    strong_candidate: { label: "Strong Candidate", variant: "success" },
     possible_candidate: { label: "Possible Candidate", variant: "warning" },
-    manual:             { label: "Manual",              variant: "secondary" },
+    manual: { label: "Manual", variant: "secondary" },
   }[type] ?? { label: type, variant: "outline" };
 }
 
 function CandidateCard({ candidate, onConfirm, onReject }) {
   const cfg = MatchTypeConfig(candidate.matchType);
+
   return (
     <Card className="border">
       <CardContent className="p-4">
         <div className="flex items-start gap-4">
+
           <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-muted">
-            <span className="text-sm font-bold">{candidate.score}%</span>
-            <span className="text-xs text-muted-foreground">score</span>
+            <span className="text-sm font-bold">
+              {candidate.score}%
+            </span>
+            <span className="text-xs text-muted-foreground">
+              score
+            </span>
           </div>
+
           <div className="flex-1 min-w-0">
+
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              <Badge variant={cfg.variant} className="text-xs">{cfg.label}</Badge>
+              <Badge
+                variant={cfg.variant}
+                className="text-xs"
+              >
+                {cfg.label}
+              </Badge>
+
               {candidate.reasons.map((r) => (
-                <span key={r} className="text-xs text-muted-foreground">· {r}</span>
+                <span
+                  key={r}
+                  className="text-xs text-muted-foreground"
+                >
+                  · {r}
+                </span>
               ))}
             </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+
+              {/* EXPENSE */}
               <div className="rounded bg-muted/50 p-2">
-                <p className="text-xs font-medium text-muted-foreground mb-1">EXPENSE</p>
-                <p className="font-medium truncate">{candidate.expense.vendorName || "—"}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatDate(candidate.expense.documentDate)} · {formatCurrency(candidate.expense.grossAmount ?? 0, candidate.expense.currency)}
+
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  EXPENSE
                 </p>
+
+                <p className="font-medium truncate">
+                  {candidate.expense?.vendor_name || "—"}
+                </p>
+
+                <p className="text-xs text-muted-foreground">
+                  {formatDate(candidate.expense?.document_date)}
+                  {" · "}
+                  {formatCurrency(
+                    candidate.expense?.gross_amount ?? 0,
+                    candidate.expense?.currency
+                  )}
+                </p>
+
               </div>
+
+              {/* TRANSACTION */}
               <div className="rounded bg-muted/50 p-2">
-                <p className="text-xs font-medium text-muted-foreground mb-1">TRANSACTION</p>
-                <p className="font-medium truncate">{candidate.transaction.description}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatDate(candidate.transaction.transactionDate)} · {formatCurrency(Math.abs(candidate.transaction.billedAmount ?? candidate.transaction.originalAmount ?? 0), candidate.transaction.billedCurrency)}
+
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  TRANSACTION
                 </p>
+
+                <p className="font-medium truncate">
+                  {candidate.transaction?.description || "—"}
+                </p>
+
+                <p className="text-xs text-muted-foreground">
+                  {formatDate(
+                    candidate.transaction?.transaction_date
+                  )}
+                  {" · "}
+                  {formatCurrency(
+                    Math.abs(
+                      candidate.transaction?.billed_amount ??
+                      candidate.transaction?.original_amount ??
+                      0
+                    ),
+                    candidate.transaction?.billed_currency
+                  )}
+                </p>
+
               </div>
+
             </div>
           </div>
+
           <div className="flex flex-col gap-2 shrink-0">
-            <Button size="sm" onClick={() => onConfirm(candidate)}>
-              <Link2 className="mr-2 h-4 w-4" />Confirm
+
+            <Button
+              size="sm"
+              onClick={() => onConfirm(candidate)}
+            >
+              <Link2 className="mr-2 h-4 w-4" />
+              Confirm
             </Button>
-            <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => onReject(candidate)}>
+
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => onReject(candidate)}
+            >
               Reject
             </Button>
+
           </div>
+
         </div>
       </CardContent>
     </Card>
@@ -112,92 +187,605 @@ export default function ReconciliationPage() {
   const { month: periodMonth, year: periodYear, setPeriod } = usePeriodStore();
   const period = buildPeriod(periodYear, periodMonth);
 
-  const [data, setData]   = useState(null);
+  const [data, setData] = useState(null);
   const [search, setSearch] = useState("");
 
-  function load() {
-    // Scope to selected accounting period
-    const periodStmts  = statementService.getByPeriod(period);
-    const periodStmtIds = new Set(periodStmts.map((s) => s.id));
+  async function load() {
 
-    // CC expenses whose documentDate falls in this period
-    const ccExpenses = expenseService.getApprovedCreditCardByPeriod(period);
+    try {
 
-    // Transactions imported under this period's statements
-    const periodTxns = transactionService.getByStatementIds([...periodStmtIds]);
+      // ============================================================
+      // LOAD DATA FOR SELECTED PERIOD
+      // ============================================================
 
-    const allExpenses         = expenseService.getAll();
-    const allConfirmedMatches = reconciliationService.getConfirmed();
+      const [
+        periodStmts,
+        ccExpenses,
+        periodTxns,
+        allExpenses,
+        allMatches
+      ] = await Promise.all([
 
-    // Only show confirmed matches where BOTH sides belong to this period
-    const periodExpenseIds = new Set(ccExpenses.map((e) => e.id));
-    const periodTxnIds     = new Set(periodTxns.map((t) => t.id));
-    const confirmedMatches = allConfirmedMatches.filter(
-      (m) => periodExpenseIds.has(m.expenseId) && periodTxnIds.has(m.transactionId)
-    );
+        statementRepository.getAll({
+          period
+        }),
 
-    const candidates = reconciliationService.generateCandidates(ccExpenses, periodTxns);
+        expenseRepository.getAll({
+          payment_method: "credit_card",
+          status: "approved"
+        }),
 
-    const matchedExpenseIds = new Set(confirmedMatches.map((m) => m.expenseId));
-    const matchedTxnIds     = new Set(confirmedMatches.map((m) => m.transactionId));
+        transactionRepository.getAll({
+          statement_period: period
+        }),
 
-    const unmatchedTxns       = periodTxns.filter((t) => !matchedTxnIds.has(t.id) && t.status !== "ignored");
-    const expensesWithoutCharge = ccExpenses.filter((e) => !matchedExpenseIds.has(e.id));
+        expenseRepository.getAll(),
 
-    // Non-CC expenses for this period (cash, bank — not shown in reconciliation but count for awareness)
-    const nonCcExpenses = allExpenses.filter(
-      (e) =>
-        e.status === "approved" &&
-        e.paymentMethod !== "credit_card" &&
-        e.documentDate &&
-        e.documentDate.startsWith(period)
-    );
+        await reconciliationRepository.getAllMatches()
 
-    const enrichedMatches = confirmedMatches.map((m) => ({
-      match: m,
-      expense:     allExpenses.find((e) => e.id === m.expenseId),
-      transaction: periodTxns.find((t) => t.id === m.transactionId),
-    }));
+      ]);
 
-    setData({
-      candidates,
-      enrichedMatches,
-      unmatchedTxns,
-      expensesWithoutCharge,
-      nonCcExpenses,
-      totalTxns: periodTxns.length,
-      hasStatements: periodStmts.length > 0,
-    });
+
+      // ============================================================
+      // SCOPE DATA TO PERIOD
+      // ============================================================
+
+      const periodStmtIds =
+        new Set(
+          periodStmts.map(
+            (statement) => statement.id
+          )
+        );
+
+
+      const periodStatementTxns =
+        periodTxns.filter(
+          (transaction) =>
+            periodStmtIds.has(
+              transaction.statement_id
+            )
+        );
+
+
+      const periodCcExpenses =
+        ccExpenses.filter(
+          (expense) =>
+            expense.document_date &&
+            String(
+              expense.document_date
+            ).startsWith(period)
+        );
+
+
+      // ============================================================
+      // EXISTING MATCHES FOR THIS PERIOD
+      // ============================================================
+
+      const periodExpenseIds =
+        new Set(
+          periodCcExpenses.map(
+            (expense) => expense.id
+          )
+        );
+
+
+      const periodTxnIds =
+        new Set(
+          periodStatementTxns.map(
+            (transaction) => transaction.id
+          )
+        );
+
+
+      const confirmedMatches =
+        allMatches.filter(
+          (match) =>
+            match.status === "confirmed" &&
+            periodExpenseIds.has(
+              match.expense_id
+            ) &&
+            periodTxnIds.has(
+              match.transaction_id
+            )
+        );
+
+
+      // ============================================================
+      // ALREADY MATCHED IDS
+      // ============================================================
+
+      const matchedExpenseIds =
+        new Set(
+          confirmedMatches.map(
+            (match) =>
+              match.expense_id
+          )
+        );
+
+
+      const matchedTxnIds =
+        new Set(
+          confirmedMatches.map(
+            (match) =>
+              match.transaction_id
+          )
+        );
+
+
+      // ============================================================
+      // CHECK WHETHER EXISTING MATCHES STILL REPRESENT
+      // THE CURRENT EXPENSE / TRANSACTION DATA
+      //
+      // We re-score an existing match using the current records.
+      //
+      // If the score/reasons changed, something relevant changed
+      // in one of the two records and the pair needs revalidation.
+      // ============================================================
+
+      const staleMatches = [];
+
+
+      for (const match of confirmedMatches) {
+
+        const expense =
+          periodCcExpenses.find(
+            (item) =>
+              item.id === match.expense_id
+          );
+
+
+        const transaction =
+          periodStatementTxns.find(
+            (item) =>
+              item.id === match.transaction_id
+          );
+
+
+        if (!expense || !transaction) {
+
+          staleMatches.push(match);
+
+          continue;
+        }
+
+
+        const currentScore = reconciliationRepository.scoreMatch(
+            expense,
+            transaction
+          );
+
+
+        const oldScore =
+          Number(
+            match.score ?? 0
+          );
+
+
+        const oldReasons =
+          Array.isArray(match.reasons)
+            ? match.reasons
+            : [];
+
+
+        const reasonsChanged =
+          JSON.stringify(
+            oldReasons
+          ) !== JSON.stringify(
+            currentScore.reasons
+          );
+
+
+        const scoreChanged =
+          oldScore !==
+          currentScore.score;
+
+
+        if (
+          scoreChanged ||
+          reasonsChanged
+        ) {
+
+          staleMatches.push({
+            ...match,
+
+            expense,
+            transaction,
+
+            currentScore:
+              currentScore.score,
+
+            currentReasons:
+              currentScore.reasons
+
+          });
+
+        }
+
+      }
+
+
+      // ============================================================
+      // UNMATCHED ITEMS
+      //
+      // These are the only records that should normally enter
+      // a NEW matching process.
+      //
+      // Existing confirmed matches remain untouched.
+      // ============================================================
+
+      const unmatchedExpenses =
+        periodCcExpenses.filter(
+          (expense) =>
+            !matchedExpenseIds.has(
+              expense.id
+            )
+        );
+
+
+      const unmatchedTransactions =
+        periodStatementTxns.filter(
+          (transaction) =>
+            !matchedTxnIds.has(
+              transaction.id
+            ) &&
+            transaction.status !== "ignored"
+        );
+
+
+      // ============================================================
+      // DETERMINE WHETHER NEW MATCHING IS REQUIRED
+      //
+      // Matching is required when:
+      //
+      // 1. There are new/unmatched expenses
+      // 2. There are new/unmatched transactions
+      // 3. Existing matches became stale because their source
+      //    records changed
+      //
+      // If neither side changed, we don't need to calculate
+      // every possible combination again.
+      // ============================================================
+
+      const needsMatching =
+        unmatchedExpenses.length > 0 ||
+        unmatchedTransactions.length > 0 ||
+        staleMatches.length > 0;
+
+
+      let selectedCandidates = [];
+
+
+      if (needsMatching) {
+
+        // ========================================================
+        // MATCHING PROCESS
+        //
+        // Compare EVERY currently unmatched expense against
+        // EVERY currently unmatched transaction.
+        //
+        // generateCandidates() uses scoreMatch() internally.
+        // ========================================================
+
+        const candidates =
+          await reconciliationRepository.generateCandidates(
+            unmatchedExpenses,
+            unmatchedTransactions
+          );
+
+
+        // ========================================================
+        // SELECT BEST NON-CONFLICTING PAIRS
+        //
+        // candidates are expected to be sorted by score descending.
+        //
+        // selectCandidates() takes the highest scoring pair first,
+        // claims both records, then continues.
+        //
+        // Therefore:
+        //
+        // Expense A -> Transaction 1 = 100
+        // Expense A -> Transaction 2 = 80
+        //
+        // Transaction 1 gets Expense A.
+        // Transaction 2 can then only be considered for another
+        // expense.
+        // ========================================================
+
+        selectedCandidates =
+          await reconciliationRepository.selectCandidates(
+            candidates,
+            [],
+            []
+          );
+
+      }
+
+
+      // ============================================================
+      // STRONG / POSSIBLE CANDIDATES
+      // ============================================================
+
+      const strongCandidates =
+        selectedCandidates.filter(
+          (candidate) =>
+            candidate.matchType ===
+            "strong_candidate"
+        );
+
+
+      const possibleCandidates =
+        selectedCandidates.filter(
+          (candidate) =>
+            candidate.matchType ===
+            "possible_candidate"
+        );
+
+
+      // ============================================================
+      // COUNT ITEMS THAT CANNOT CURRENTLY HAVE A 1:1 MATCH
+      //
+      // Example:
+      //
+      // 17 unmatched transactions
+      // 12 unmatched expenses
+      //
+      // At least 5 transactions cannot have an expense counterpart.
+      // ============================================================
+
+      const unavoidableUnmatchedCount =
+        Math.abs(
+          unmatchedTransactions.length -
+          unmatchedExpenses.length
+        );
+
+
+      // ============================================================
+      // TRANSACTIONS LEFT WITHOUT A CANDIDATE
+      // ============================================================
+
+      const candidateTxnIds =
+        new Set(
+          selectedCandidates.map(
+            (candidate) =>
+              candidate.transactionId
+          )
+        );
+
+
+      const finalUnmatchedTxns =
+        unmatchedTransactions.filter(
+          (transaction) =>
+            !candidateTxnIds.has(
+              transaction.id
+            )
+        );
+
+
+      // ============================================================
+      // EXPENSES LEFT WITHOUT A CANDIDATE
+      // ============================================================
+
+      const candidateExpenseIds =
+        new Set(
+          selectedCandidates.map(
+            (candidate) =>
+              candidate.expenseId
+          )
+        );
+
+
+      const finalExpensesWithoutCharge =
+        unmatchedExpenses.filter(
+          (expense) =>
+            !candidateExpenseIds.has(
+              expense.id
+            )
+        );
+
+
+      // ============================================================
+      // NON-CREDIT-CARD EXPENSES
+      //
+      // These don't participate in reconciliation.
+      // ============================================================
+
+      const nonCcExpenses =
+        allExpenses.filter(
+          (expense) =>
+            expense.status === "approved" &&
+            expense.payment_method !== "credit_card" &&
+            expense.document_date &&
+            String(
+              expense.document_date
+            ).startsWith(period)
+        );
+
+
+      // ============================================================
+      // ENRICH EXISTING CONFIRMED MATCHES
+      // ============================================================
+
+      const enrichedMatches =
+        confirmedMatches.map(
+          (match) => ({
+
+            match,
+
+            expense:
+              allExpenses.find(
+                (expense) =>
+                  expense.id ===
+                  match.expense_id
+              ),
+
+            transaction:
+              periodStatementTxns.find(
+                (transaction) =>
+                  transaction.id ===
+                  match.transaction_id
+              )
+
+          })
+        );
+
+
+      // ============================================================
+      // SAVE PAGE DATA
+      // ============================================================
+
+      setData({
+
+        candidates:
+          selectedCandidates,
+
+        strongCandidates,
+
+        possibleCandidates,
+
+        enrichedMatches,
+
+        unmatchedTxns:
+          finalUnmatchedTxns,
+
+        expensesWithoutCharge:
+          finalExpensesWithoutCharge,
+
+        nonCcExpenses,
+
+        totalTxns:
+          periodStatementTxns.length,
+
+        totalExpenses:
+          periodCcExpenses.length,
+
+        unavoidableUnmatchedCount,
+
+        staleMatches,
+
+        hasChanges:
+          needsMatching,
+
+        hasStatements:
+          periodStmts.length > 0
+
+      });
+
+
+    } catch (err) {
+
+      console.error(
+        "Failed to load reconciliation:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to load reconciliation"
+      );
+
+    }
+
   }
 
   // Reload whenever period changes
   useEffect(() => { load(); }, [period]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleConfirm(candidate) {
-    reconciliationService.confirmMatch(
-      candidate.expenseId, candidate.transactionId,
-      candidate.matchType, candidate.score, candidate.reasons
-    );
-    toast.success("Match confirmed");
-    load();
+  async function handleConfirm(candidate) {
+    console.log(candidate)
+
+    try {
+
+      await reconciliationRepository.confirmMatch(
+        candidate.expenseId,
+        candidate.transactionId,
+        candidate.matchType,
+        candidate.score,
+        candidate.reasons
+      );
+
+      toast.success("Match confirmed");
+
+      await load();
+
+    } catch (err) {
+
+      console.error(
+        "Failed to confirm match:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to confirm match"
+      );
+
+    }
+
   }
 
-  function handleReject(candidate) {
-    reconciliationService.rejectCandidate(candidate.expenseId, candidate.transactionId);
-    toast.info("Match rejected");
-    load();
+
+  async function handleReject(candidate) {
+
+    try {
+
+      await reconciliationRepository.rejectCandidate(
+        candidate.expenseId,
+        candidate.transactionId
+      );
+
+      toast.info("Match rejected");
+
+      await load();
+
+    } catch (err) {
+
+      console.error(
+        "Failed to reject candidate:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to reject candidate"
+      );
+
+    }
+
   }
 
-  function handleUndo(matchId) {
-    reconciliationService.undoMatch(matchId);
-    toast.info("Match undone");
-    load();
+
+  async function handleUndo(matchId) {
+
+    try {
+
+      await reconciliationRepository.undoMatch(
+        matchId
+      );
+
+      toast.info("Match undone");
+
+      await load();
+
+    } catch (err) {
+
+      console.error(
+        "Failed to undo match:",
+        err
+      );
+
+      toast.error(
+        err.message ||
+        "Failed to undo match"
+      );
+
+    }
+
   }
 
   if (!data) return null;
 
-  const matchedCount     = data.enrichedMatches.length;
-  const matchRate        = data.totalTxns > 0 ? Math.round((matchedCount / data.totalTxns) * 100) : 0;
+  const matchedCount = data.enrichedMatches.length;
+  const matchRate = data.totalTxns > 0 ? Math.round((matchedCount / data.totalTxns) * 100) : 0;
   const strongCandidates = data.candidates.filter((c) => c.matchType === "strong_candidate");
   const possibleCandidates = data.candidates.filter((c) => c.matchType === "possible_candidate");
 
@@ -206,6 +794,12 @@ export default function ReconciliationPage() {
   );
   const filteredNoCharge = data.expensesWithoutCharge.filter(
     (e) => !search || (e.vendorName ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  console.log("CANDIDATES:", data.candidates);
+  console.log(
+    "MATCH TYPES:",
+    data.candidates.map((c) => c.matchType)
   );
 
   return (
@@ -297,33 +891,67 @@ export default function ReconciliationPage() {
 
           {/* Candidates */}
           <TabsContent value="candidates" className="mt-4 space-y-3">
+
             {strongCandidates.length > 0 && (
               <>
-                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">Strong Candidates</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+                  Strong Candidates
+                </p>
+
                 {strongCandidates
-                  .filter((c) => !search ||
-                    c.expense.vendorName?.toLowerCase().includes(search.toLowerCase()) ||
-                    c.transaction.description.toLowerCase().includes(search.toLowerCase()))
+                  .filter(
+                    (c) =>
+                      !search ||
+                      c.expense?.vendor_name
+                        ?.toLowerCase()
+                        .includes(search.toLowerCase()) ||
+                      c.transaction?.description
+                        ?.toLowerCase()
+                        .includes(search.toLowerCase())
+                  )
                   .map((c) => (
-                    <CandidateCard key={`${c.expenseId}-${c.transactionId}`} candidate={c} onConfirm={handleConfirm} onReject={handleReject} />
+                    <CandidateCard
+                      key={`${c.expenseId}-${c.transactionId}`}
+                      candidate={c}
+                      onConfirm={handleConfirm}
+                      onReject={handleReject}
+                    />
                   ))}
               </>
             )}
+
             {possibleCandidates.length > 0 && (
               <>
-                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mt-4">Possible Candidates</p>
+                <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mt-4">
+                  Possible Candidates
+                </p>
+
                 {possibleCandidates
-                  .filter((c) => !search ||
-                    c.expense.vendorName?.toLowerCase().includes(search.toLowerCase()) ||
-                    c.transaction.description.toLowerCase().includes(search.toLowerCase()))
+                  .filter(
+                    (c) =>
+                      !search ||
+                      c.expense?.vendor_name
+                        ?.toLowerCase()
+                        .includes(search.toLowerCase()) ||
+                      c.transaction?.description
+                        ?.toLowerCase()
+                        .includes(search.toLowerCase())
+                  )
                   .map((c) => (
-                    <CandidateCard key={`${c.expenseId}-${c.transactionId}`} candidate={c} onConfirm={handleConfirm} onReject={handleReject} />
+                    <CandidateCard
+                      key={`${c.expenseId}-${c.transactionId}`}
+                      candidate={c}
+                      onConfirm={handleConfirm}
+                      onReject={handleReject}
+                    />
                   ))}
               </>
             )}
+
             {data.candidates.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <GitMerge className="h-10 w-10 mb-3 opacity-30" />
+
                 <p className="text-sm">
                   {data.hasStatements
                     ? "No suggestions — upload receipts matching the imported transactions"
@@ -331,51 +959,97 @@ export default function ReconciliationPage() {
                 </p>
               </div>
             )}
+
           </TabsContent>
 
+          {/* Matched */}
           {/* Matched */}
           <TabsContent value="matched" className="mt-4 space-y-3">
             {data.enrichedMatches.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <CheckCircle2 className="h-10 w-10 mb-3 opacity-30" />
-                <p className="text-sm">No confirmed matches for {periodLabel(period)}</p>
+                <p className="text-sm">
+                  No confirmed matches for {periodLabel(period)}
+                </p>
               </div>
             ) : (
               data.enrichedMatches
-                .filter((m) =>
-                  !search ||
-                  m.expense?.vendorName?.toLowerCase().includes(search.toLowerCase()) ||
-                  m.transaction?.description?.toLowerCase().includes(search.toLowerCase()))
+                .filter(
+                  (m) =>
+                    !search ||
+                    m.expense?.vendor_name
+                      ?.toLowerCase()
+                      .includes(search.toLowerCase()) ||
+                    m.transaction?.description
+                      ?.toLowerCase()
+                      .includes(search.toLowerCase())
+                )
                 .map(({ match, expense, transaction }) => (
-                  <MatchedCard key={match.id} match={match} expense={expense} transaction={transaction} onUndo={handleUndo} />
+                  <MatchedCard
+                    key={match.id}
+                    match={match}
+                    expense={expense}
+                    transaction={transaction}
+                    onUndo={handleUndo}
+                  />
                 ))
             )}
           </TabsContent>
 
-          {/* Missing receipts (CC txns without expense) */}
+
+          {/* Missing receipts (CC transactions without expense) */}
           <TabsContent value="missing" className="mt-4 space-y-3">
             <p className="text-xs text-muted-foreground">
               {periodLabel(period)} credit card transactions with no matched expense record
             </p>
+
             {filteredUnmatched.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <CheckCircle2 className="h-10 w-10 mb-3 text-green-500 opacity-60" />
-                <p className="text-sm">All transactions have receipts</p>
+                <p className="text-sm">
+                  All transactions have receipts
+                </p>
               </div>
             ) : (
               filteredUnmatched.map((txn) => (
-                <Card key={txn.id} className="border-red-200 dark:border-red-900">
+                <Card
+                  key={txn.id}
+                  className="border-red-200 dark:border-red-900"
+                >
                   <CardContent className="p-4 flex items-center gap-4">
                     <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{txn.description}</p>
+                      <p className="text-sm font-medium truncate">
+                        {txn.description || "—"}
+                      </p>
+
                       <p className="text-xs text-muted-foreground">
-                        {formatDate(txn.transactionDate)}{txn.cardLastFour ? ` · ••••${txn.cardLastFour}` : ""}
+                        {formatDate(txn.transaction_date)}
+                        {txn.card_last_four
+                          ? ` · ••••${txn.card_last_four}`
+                          : ""}
                       </p>
                     </div>
+
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-semibold">{formatCurrency(Math.abs(txn.billedAmount ?? txn.originalAmount ?? 0), txn.billedCurrency)}</p>
-                      <Badge variant="destructive" className="text-xs">Missing Receipt</Badge>
+                      <p className="text-sm font-semibold">
+                        {formatCurrency(
+                          Math.abs(
+                            txn.billed_amount ??
+                            txn.original_amount ??
+                            0
+                          ),
+                          txn.billed_currency
+                        )}
+                      </p>
+
+                      <Badge
+                        variant="destructive"
+                        className="text-xs"
+                      >
+                        Missing Receipt
+                      </Badge>
                     </div>
                   </CardContent>
                 </Card>
@@ -389,23 +1063,51 @@ export default function ReconciliationPage() {
               Approved credit-card expenses for {periodLabel(period)} with no matching transaction.
               Cash and bank-transfer expenses do NOT appear here.
             </p>
+
             {filteredNoCharge.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <CheckCircle2 className="h-10 w-10 mb-3 text-green-500 opacity-60" />
-                <p className="text-sm">All CC expenses have a matching transaction</p>
+
+                <p className="text-sm">
+                  All CC expenses have a matching transaction
+                </p>
               </div>
             ) : (
               filteredNoCharge.map((exp) => (
-                <Card key={exp.id} className="border-yellow-200 dark:border-yellow-900">
+                <Card
+                  key={exp.id}
+                  className="border-yellow-200 dark:border-yellow-900"
+                >
                   <CardContent className="p-4 flex items-center gap-4">
                     <Link2Off className="h-5 w-5 text-yellow-600 shrink-0" />
+
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{exp.vendorName || "—"}</p>
-                      <p className="text-xs text-muted-foreground">{formatDate(exp.documentDate)} · {exp.documentNumber}</p>
+                      <p className="text-sm font-medium truncate">
+                        {exp.vendor_name || "—"}
+                      </p>
+
+                      <p className="text-xs text-muted-foreground">
+                        {formatDate(exp.document_date)}
+                        {exp.document_number
+                          ? ` · ${exp.document_number}`
+                          : ""}
+                      </p>
                     </div>
+
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-semibold">{formatCurrency(exp.grossAmount ?? 0, exp.currency)}</p>
-                      <Badge variant="warning" className="text-xs">No Card Charge</Badge>
+                      <p className="text-sm font-semibold">
+                        {formatCurrency(
+                          exp.gross_amount ?? 0,
+                          exp.currency
+                        )}
+                      </p>
+
+                      <Badge
+                        variant="warning"
+                        className="text-xs"
+                      >
+                        No Card Charge
+                      </Badge>
                     </div>
                   </CardContent>
                 </Card>
