@@ -1,4 +1,4 @@
-const BASE_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/vendors`;
+const BASE_URL = `https://placebo-finance-hub-backend.onrender.com/api/vendors`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";

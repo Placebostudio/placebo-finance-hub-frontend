@@ -1,4 +1,4 @@
-const BASE_URL =`${process.env.NEXT_PUBLIC_API_URL}/api/currencies`;
+const BASE_URL =`https://placebo-finance-hub-backend.onrender.com/api/currencies`;
 
 export const currencyRepository = {
 

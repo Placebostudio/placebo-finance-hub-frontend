@@ -1,5 +1,5 @@
 const BASE_URL =
-    `${process.env.NEXT_PUBLIC_API_URL}/api/users`;
+    `https://placebo-finance-hub-backend.onrender.com/api/users`;
 
 const LOGGED_IN_USER_KEY =
     "logged_in_user";

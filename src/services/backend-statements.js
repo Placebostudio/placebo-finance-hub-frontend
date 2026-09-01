@@ -2,7 +2,7 @@ import { auditRepository } from "./backend-audits";
 import { userRepository } from "./backend-users";
 
 const BASE_URL =
-    `${process.env.NEXT_PUBLIC_API_URL}/api/statements`;
+    `https://placebo-finance-hub-backend.onrender.com/api/statements`;
 
 export const statementRepository = {
 

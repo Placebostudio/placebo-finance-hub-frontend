@@ -1,5 +1,5 @@
 const BASE_URL =
-    `${process.env.NEXT_PUBLIC_API_URL}/api/expenses`;
+    `https://placebo-finance-hub-backend.onrender.com/api/expenses`;
 
 import { auditRepository } from "./backend-audits.js";
 import { userRepository } from "./backend-users.js";
