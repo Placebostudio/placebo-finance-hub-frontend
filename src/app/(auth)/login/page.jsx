@@ -151,12 +151,6 @@ function LoginContent() {
                 )}
               </Button>
             </form>
-
-            <div className="mt-6 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
-              <p className="font-medium mb-1">Demo credentials (not production auth):</p>
-              <p>Username: <span className="font-mono font-semibold text-foreground">Placeboadmin</span></p>
-              <p>Password: <span className="font-mono font-semibold text-foreground">Placebo2026</span></p>
-            </div>
           </CardContent>
         </Card>
 
