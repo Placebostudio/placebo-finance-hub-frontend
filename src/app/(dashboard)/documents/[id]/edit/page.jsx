@@ -49,9 +49,6 @@ import {
 
 import { PageHeader } from "@/components/layout/page-header";
 
-import { documentService } from "@/services/document.service";
-import { expenseService } from "@/services/expense.service";
-import { reconciliationService } from "@/services/reconciliation.service";
 
 import { APP_CONFIG } from "@/config";
 import { calculateFromGross } from "@/lib/utils";
@@ -69,6 +66,12 @@ import { documentExtractionRepository } from "@/services/backend-document_extrac
 import { expenseRepository } from "@/services/backend-expenses";
 import { categoryRepository } from "@/services/backend-categories";
 import { currencyRepository } from "@/services/backend-currencies";
+import { reconciliationRepository } from "@/services/backend-reconciliation";
+
+
+// import { documentService } from "@/services/document.service";
+// import { expenseService } from "@/services/expense.service";
+// import { reconciliationService } from "@/services/reconciliation.service";
 
 const EMPTY_FORM = {
   vendorName: "",
@@ -1080,12 +1083,7 @@ export default function EditDocumentPage() {
       // REVALIDATE RECONCILIATION
       // ============================================================
 
-      const recon =
-        await reconciliationService
-          .revalidateMatchAfterExpenseEdit(
-            expense.id,
-            updated
-          );
+      const recon = await reconciliationRepository.getConfirmedMatches();
 
       if (
         recon?.action === "removed"

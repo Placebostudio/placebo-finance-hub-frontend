@@ -7,10 +7,6 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/page-header";
 import { PeriodSelector } from "@/components/layout/period-selector";
-import { expenseService } from "@/services/expense.service";
-import { transactionService } from "@/services/transaction.service";
-import { reconciliationService } from "@/services/reconciliation.service";
-import { statementService } from "@/services/statement.service";
 import { settingsService } from "@/services/settings.service";
 import { formatCurrency, buildPeriod, periodLabel } from "@/lib/utils";
 import { usePeriodStore } from "@/store/period";
@@ -19,6 +15,12 @@ import ExpenseLedger from "./ExpenseLedger";
 import { expenseRepository } from "@/services/backend-expenses";
 import { expenseLedgerRepository } from "@/services/backend-expense-ledger";
 import { transactionRepository } from "@/services/backend-transactions";
+import { reconciliationRepository } from "@/services/backend-reconciliation";
+
+// import { statementService } from "@/services/statement.service";
+// import { expenseService } from "@/services/expense.service";
+// import { transactionService } from "@/services/transaction.service";
+// import { reconciliationService } from "@/services/reconciliation.service";
 
 function StatRow({ label, value, sub }) {
   return (
@@ -55,7 +57,7 @@ function OverviewTab() {
           expenseLedgerRepository.getAll({ period, spam: false }),
         ]);
 
-        const confirmed = reconciliationService.getConfirmed();
+        const confirmed = await reconciliationRepository.getConfirmedMatches();
 
         // ─────────────────────────────────────────────
         // EXPENSES

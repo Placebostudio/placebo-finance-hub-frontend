@@ -11,21 +11,20 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/page-header";
 import { PeriodSelector } from "@/components/layout/period-selector";
-import { documentService } from "@/services/document.service";
-import { expenseService } from "@/services/expense.service";
-import { reconciliationService } from "@/services/reconciliation.service";
-import { auditService } from "@/services/audit.service";
 
 import { documentRepository } from "@/services/backend-documents";
-import { auditRepository } from "@/services/backend-audits";
 import { expenseRepository } from "@/services/backend-expenses";
-
-
+import { reconciliationRepository } from "@/services/backend-reconciliation";
 
 import { usePeriodStore } from "@/store/period";
 import { useAuthStore } from "@/store/auth";
 import { formatDate, formatFileSize, buildPeriod, periodLabel, dateToPeriod } from "@/lib/utils";
 import { toast } from "sonner";
+
+// import { documentService } from "@/services/document.service";
+// import { expenseService } from "@/services/expense.service";
+// import { reconciliationService } from "@/services/reconciliation.service";
+// import { auditService } from "@/services/audit.service";
 
 const STATUS_LABELS = {
   pending_review: { label: "Pending Review", variant: "warning" },
@@ -50,7 +49,7 @@ export default function DocumentsPage() {
       const [docs, exps, matches] = await Promise.all([
         documentRepository.getAll(),
         expenseRepository.getAll(),
-        reconciliationService.getConfirmed(),
+        reconciliationRepository.getConfirmedMatches(),
       ]);
 
       setDocuments(docs ?? []);

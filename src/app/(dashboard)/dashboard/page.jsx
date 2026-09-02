@@ -6,15 +6,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/layout/page-header";
-import { documentService } from "@/services/document.service";
-import { expenseService } from "@/services/expense.service";
-import { transactionService } from "@/services/transaction.service";
-import { reconciliationService } from "@/services/reconciliation.service";
 import { formatCurrency, formatDate } from "@/lib/utils";
-
 import { documentRepository } from "@/services/backend-documents";
 import { expenseRepository } from "@/services/backend-expenses";
 import { transactionRepository } from "@/services/backend-transactions";
+import { reconciliationRepository } from "@/services/backend-reconciliation";
+
+// frontend only files, can be used for frontend testing
+
+// import { documentService } from "@/services/document.service";
+// import { expenseService } from "@/services/expense.service";
+// import { transactionService } from "@/services/transaction.service";
+// import { reconciliationService } from "@/services/reconciliation.service";
 
 
 function StatCard({ icon: Icon, label, value, color, href }) {
@@ -68,7 +71,7 @@ export default function DashboardPage() {
         }));
         // Reconciliation is frontend-only.
         const matches =
-          reconciliationService.getConfirmed();
+          await reconciliationRepository.getConfirmedMatches();
 
         // Approved credit-card expenses.
         // Expense filtering can also be moved to the backend
@@ -90,7 +93,7 @@ export default function DashboardPage() {
           unmatchedTxns.length;
 
         const suggestedCandidates =
-          reconciliationService.generateCandidates(
+          await reconciliationRepository.generateCandidates(
             ccExpenses,
             transactions
           );
