@@ -168,7 +168,7 @@ export const documentExtractionRepository = {
                 data.fields ?? {},
 
             validation_issues:
-                data.validation_issues ?? [],
+                data.validation_issues ?? {},
 
             full_text:
                 data.full_text ?? null,
