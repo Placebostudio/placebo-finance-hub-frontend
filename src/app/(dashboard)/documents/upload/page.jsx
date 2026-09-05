@@ -207,7 +207,7 @@ export default function UploadPage() {
         document_id: doc.id,
         method: result.method ?? method,
         fields: result.fields,
-        validation_issues: result.validationIssues ?? [],
+        validation_issues: result.validationIssues ?? {},
         full_text: result.fullText ?? null,
         confidence: null,
         duration_ms: null,
